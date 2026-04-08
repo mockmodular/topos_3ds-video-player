@@ -38,7 +38,7 @@ void Vid_init_settings(void)
 	vid_player.auto_dim_5s = false;
 	vid_player.remember_video_pos = false;
 	vid_player.fs_browser_root_mode = VID_FS_BROWSER_ROOT_TF;
-	vid_player.ui_mod = false;
+	vid_player.ui_mod = true;
 	vid_player.texture_filter_mode = VID_TEX_FILTER_AUTO;
 	vid_player.video_scale_mode = VID_SCALE_FIT;
 	vid_player.seek_duration = 10;
@@ -166,7 +166,7 @@ uint32_t Vid_load_settings(void)
 		if(br <= 1)
 			vid_player.fs_browser_root_mode = br;
 	}
-	vid_player.ui_mod = false;
+	vid_player.ui_mod = true;
 	if(settings_valid_until >= SETTINGS_ELEMENTS_V13)
 		vid_player.ui_mod = (strtoul(DEF_STR_NEVER_NULL(&out_data[23]), NULL, 10) != 0);
 	if(settings_valid_until >= SETTINGS_ELEMENTS_V14)

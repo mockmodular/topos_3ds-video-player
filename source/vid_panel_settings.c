@@ -72,7 +72,7 @@ static const VpSettingRowDesc s_root_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_UI_MOD,
         "ui mod",
-        2, {"on", "off"}, 0, 0
+        2, {"off", "on"}, 0, 0
     },
 };
 
@@ -263,7 +263,7 @@ static int get_value(VpSettingId id)
         case VP_SETTING_ID_FS_BROWSER_ROOT:
             return (vid_player.fs_browser_root_mode == VID_FS_BROWSER_ROOT_MOVIE) ? 0 : 1;
         case VP_SETTING_ID_UI_MOD:
-            return vid_player.ui_mod ? 0 : 1;
+            return vid_player.ui_mod ? 1 : 0;
         case VP_SETTING_ID_SW_TEX_FILTER: {
             int m = (int)vid_player.texture_filter_mode;
             if (m < 0 || m > 2) m = (int)VID_TEX_FILTER_AUTO;
@@ -366,7 +366,7 @@ static void set_value(VpSettingId id, int v)
             int m = v;
             if (m < 0) m = 0;
             if (m > 1) m = 1;
-            vid_player.ui_mod = (m == 0);
+            vid_player.ui_mod = (m == 1);
             Vid_save_settings();
             break;
         }
