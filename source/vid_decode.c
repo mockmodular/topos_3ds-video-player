@@ -638,7 +638,8 @@ void Vid_decode_thread(void* arg)
 						Util_speaker_pause(DEF_VID_SPEAKER_SESSION_ID);
 
 					vid_player.state = PLAYER_STATE_PAUSE;
-					vid_player.sub_state = PLAYER_SUB_STATE_NONE;
+					vid_player.sub_state = (Vid_player_sub_state)(
+						vid_player.sub_state & PLAYER_SUB_STATE_PERSIST_AFTER_NATURAL_EOF_MASK);
 					natural_eof_session_held = true;
 					if(vid_player.media_duration > 0.0)
 						vid_player.media_current_pos = vid_player.media_duration;
