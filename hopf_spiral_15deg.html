@@ -1,0 +1,73 @@
+
+<canvas id="c" style="width:100%;border-radius:8px;background:#0d0d18;display:block"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const canvas = document.getElementById('c');
+const W = canvas.parentElement.offsetWidth || 640;
+const H = Math.round(W * 0.56);
+canvas.width = W; canvas.height = H;
+
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+renderer.setSize(W, H);
+renderer.setClearColor(0x0d0d18, 1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(44, W/H, 0.1, 100);
+
+// 正南方距离7，抬高15度
+const dist = 7;
+const angle = 15 * Math.PI / 180;
+camera.position.set(0, Math.sin(angle)*dist, Math.cos(angle)*dist);
+camera.lookAt(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const dl1 = new THREE.DirectionalLight(0xffffff, 1.0); dl1.position.set(3, 4, 5); scene.add(dl1);
+const dl2 = new THREE.DirectionalLight(0x8866ff, 0.55); dl2.position.set(-4, -2, 3); scene.add(dl2);
+const dl3 = new THREE.DirectionalLight(0xff8844, 0.25); dl3.position.set(0, 3, -3); scene.add(dl3);
+
+function hopfPt(theta, phi, t, scale=2.0){
+  const eta = theta/2;
+  const c1 = Math.cos(eta)*Math.cos(t);
+  const c2 = Math.cos(eta)*Math.sin(t);
+  const c3 = Math.sin(eta)*Math.cos(phi+t);
+  const c4 = Math.sin(eta)*Math.sin(phi+t);
+  const d = 1 - c4;
+  if(Math.abs(d) < 0.005) return null;
+  return new THREE.Vector3(c1/d*scale, c2/d*scale, c3/d*scale);
+}
+
+function makePts(theta, phi, segs=72){
+  const pts=[], th=Math.max(0.04, Math.min(Math.PI-0.04, theta));
+  for(let i=0; i<=segs; i++){
+    const t = (i/segs)*Math.PI*2;
+    const p = hopfPt(th, phi, t);
+    pts.push(p || new THREE.Vector3(0,0,0));
+  }
+  return pts;
+}
+
+const root = new THREE.Group();
+root.rotation.x = -Math.PI / 2;
+scene.add(root);
+
+const N = 20;
+for(let fi = 0; fi < N; fi++){
+  const frac = fi / (N-1);
+  const theta = 0.2 + frac * Math.PI * 0.6;
+  const phi   = frac * Math.PI * 4;
+  const pts   = makePts(theta, phi, 72);
+  const curve = new THREE.CatmullRomCurve3(pts, true);
+  const geo   = new THREE.TubeGeometry(curve, 72, 0.040, 7, true);
+  const hue   = frac * 0.72 + 0.12;
+  const col   = new THREE.Color().setHSL(hue, 0.88, 0.56);
+  const mat   = new THREE.MeshPhongMaterial({color: col, shininess: 80, specular: new THREE.Color(0.4,0.35,0.6)});
+  root.add(new THREE.Mesh(geo, mat));
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  root.rotation.z += 0.004;
+  renderer.render(scene, camera);
+}
+frame();
+</script>

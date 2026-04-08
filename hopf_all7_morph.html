@@ -1,0 +1,269 @@
+
+<canvas id="c" style="display:block;width:100%;background:#0d0d14;border-radius:12px;cursor:grab"></canvas>
+<div id="ui" style="position:absolute;bottom:0;left:0;right:0;padding:12px 16px;background:linear-gradient(transparent,rgba(0,0,0,0.7));border-radius:0 0 12px 12px;pointer-events:none">
+  <div id="lbl" style="color:#fff;font-size:15px;font-weight:500;font-family:sans-serif;margin-bottom:4px"></div>
+  <div id="sub" style="color:rgba(255,255,255,0.55);font-size:12px;font-family:sans-serif;margin-bottom:8px"></div>
+  <div style="display:flex;gap:4px;align-items:center">
+    <div id="bar" style="height:3px;background:rgba(255,255,255,0.15);border-radius:2px;flex:1;overflow:hidden">
+      <div id="prog" style="height:100%;background:#7c6fff;border-radius:2px;width:0%;transition:none"></div>
+    </div>
+    <div id="idx" style="color:rgba(255,255,255,0.4);font-size:11px;font-family:monospace;min-width:32px;text-align:right"></div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const canvas = document.getElementById('c');
+const wrap = canvas.parentElement;
+wrap.style.position='relative';
+const W = wrap.offsetWidth||700;
+const H = Math.round(W*0.58);
+canvas.width=W; canvas.height=H;
+
+const renderer = new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setSize(W,H);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setClearColor(0x0d0d14,1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(48,W/H,0.1,200);
+camera.position.set(0,0,7);
+
+scene.add(new THREE.AmbientLight(0xffffff,0.45));
+const dl1=new THREE.DirectionalLight(0xffffff,0.9); dl1.position.set(4,6,5); scene.add(dl1);
+const dl2=new THREE.DirectionalLight(0x6688ff,0.4); dl2.position.set(-4,-3,2); scene.add(dl2);
+
+const root=new THREE.Group(); scene.add(root);
+
+// Hopf fiber: stereographic projection from S3→R3
+// Base point on S2: (theta, phi) spherical
+// fiber param t in [0,2pi]
+function hopfPt(theta,phi,t,scale=2.0){
+  const eta=theta/2;
+  const c1=Math.cos(eta)*Math.cos(t);
+  const c2=Math.cos(eta)*Math.sin(t);
+  const c3=Math.sin(eta)*Math.cos(phi+t);
+  const c4=Math.sin(eta)*Math.sin(phi+t);
+  const d=1-c4;
+  if(Math.abs(d)<0.005) return null;
+  return new THREE.Vector3(c1/d*scale,c2/d*scale,c3/d*scale);
+}
+
+function makeCurve(theta,phi,segs=90){
+  const pts=[];
+  // avoid pole singularity
+  const th=Math.max(0.04,Math.min(Math.PI-0.04,theta));
+  for(let i=0;i<=segs;i++){
+    const t=(i/segs)*Math.PI*2;
+    const p=hopfPt(th,phi,t);
+    if(p) pts.push(p); else pts.push(new THREE.Vector3(0,0,0));
+  }
+  return pts;
+}
+
+// 7 states: each returns array of {pts, color}
+const SEGS=88;
+
+function stateA(){ // 纬线族
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    const phi=(i/N)*Math.PI*2;
+    const theta=Math.PI*0.52;
+    fibers.push({pts:makeCurve(theta,phi,SEGS),hue:i/N});
+  }
+  return fibers;
+}
+function stateB(){ // 经线族
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    const theta=0.08+(i/(N-1))*Math.PI*0.84;
+    fibers.push({pts:makeCurve(theta,0,SEGS),hue:i/N});
+  }
+  return fibers;
+}
+function stateC(){ // 极点纤维 — south pole (tiny circle) + north pole fibers + transition
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    // from near-south (small) to near-north (large)
+    const theta=0.05+(i/(N-1))*Math.PI*0.9;
+    const phi=(i/N)*Math.PI*2*0.3;
+    fibers.push({pts:makeCurve(theta,phi,SEGS),hue:0.55+i/N*0.35});
+  }
+  return fibers;
+}
+function stateD(){ // 均匀散点
+  const fibers=[];
+  const N=20;
+  // Fibonacci sphere
+  const golden=Math.PI*(3-Math.sqrt(5));
+  for(let i=0;i<N;i++){
+    const y=1-i/(N-1)*2;
+    const r=Math.sqrt(1-y*y);
+    const phi2=golden*i;
+    const theta=Math.acos(Math.max(-1,Math.min(1,y)));
+    const phi=phi2;
+    fibers.push({pts:makeCurve(theta,phi,SEGS),hue:i/N});
+  }
+  return fibers;
+}
+function stateE(){ // 赤道族 Clifford torus
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    const phi=(i/N)*Math.PI*2;
+    const theta=Math.PI/2; // equator
+    fibers.push({pts:makeCurve(theta,phi,SEGS),hue:i/N});
+  }
+  return fibers;
+}
+function stateF(){ // 螺旋带
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    const frac=i/(N-1);
+    const theta=0.2+frac*Math.PI*0.6;
+    const phi=frac*Math.PI*4; // 2 full rotations
+    fibers.push({pts:makeCurve(theta,phi,SEGS),hue:frac*0.7+0.15});
+  }
+  return fibers;
+}
+function stateG(){ // 单根纤维特写: 20 fibers at different theta, phi=0
+  const fibers=[];
+  const N=20;
+  for(let i=0;i<N;i++){
+    const theta=0.05+(i/(N-1))*Math.PI*0.9;
+    fibers.push({pts:makeCurve(theta,0,SEGS),hue:i/N*0.65+0.05});
+  }
+  return fibers;
+}
+
+const STATES=[stateA,stateB,stateC,stateD,stateE,stateF,stateG];
+const NAMES=[
+  '纬线族','经线族','极点纤维','均匀散点','赤道族（Clifford 环面）','螺旋带','单根纤维特写'
+];
+const DESCS=[
+  '基点沿纬线 → 嵌套环面，俄罗斯套娃',
+  '基点沿经线 → 纤维从小圆展开为大圆',
+  '南极→最小圆，北极→趋向直线，骨架结构',
+  'Fibonacci 均匀散布 → 所有纤维两两链接',
+  '基点沿赤道 → 最对称的 Clifford 环面',
+  '基点沿螺旋线 → 扭转带，莫比乌斯近亲',
+  '单纬度扫描 → 立体投影下的圆→直线变化',
+];
+
+// Precompute all 7 state geometries
+const allStates = STATES.map(fn=>fn());
+
+// Create N=20 tube meshes with morph targets
+const N=20;
+const meshes=[];
+
+for(let fi=0;fi<N;fi++){
+  // Use state 0 as base
+  const pts0=allStates[0][fi].pts;
+  const curve0=new THREE.CatmullRomCurve3(pts0,true);
+  const geo=new THREE.TubeGeometry(curve0,SEGS,0.024,5,true);
+  
+  // Add morph targets for states 1..6
+  geo.morphAttributes.position=[];
+  for(let si=1;si<7;si++){
+    const ptsS=allStates[si][fi].pts;
+    const curveS=new THREE.CatmullRomCurve3(ptsS,true);
+    const geoS=new THREE.TubeGeometry(curveS,SEGS,0.024,5,true);
+    geo.morphAttributes.position.push(geoS.attributes.position);
+  }
+  
+  const hue=allStates[0][fi].hue;
+  const color=new THREE.Color().setHSL(hue,0.85,0.55);
+  const mat=new THREE.MeshPhongMaterial({color,shininess:60,morphTargets:true,transparent:true,opacity:0.88});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.morphTargetInfluences=new Array(6).fill(0);
+  root.add(mesh);
+  meshes.push({mesh,hue});
+}
+
+// Each state shown for 2.5s, transition 1.5s → total per state ~4s, 7 states = 28s cycle
+// But let's do: show 2s + morph 1.5s = 3.5s per state → 24.5s cycle ≈ 25s
+const SHOW=2.2, MORPH=1.4;
+const CYCLE=(SHOW+MORPH)*7;
+
+function eio(t){return t<0.5?2*t*t:1-2*(1-t)*(1-t);}
+
+let isDrag=false,px=0,py=0,ry=0,rx=0;
+canvas.addEventListener('mousedown',e=>{isDrag=true;px=e.clientX;py=e.clientY;});
+window.addEventListener('mouseup',()=>isDrag=false);
+canvas.addEventListener('mousemove',e=>{
+  if(!isDrag)return;
+  ry+=(e.clientX-px)*0.007;rx+=(e.clientY-py)*0.007;
+  px=e.clientX;py=e.clientY;
+  rx=Math.max(-1.1,Math.min(1.1,rx));
+});
+
+const lbl=document.getElementById('lbl');
+const sub=document.getElementById('sub');
+const prog=document.getElementById('prog');
+const idx=document.getElementById('idx');
+
+let t0=performance.now();
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const elapsed=((now-t0)/1000)%CYCLE;
+  const period=SHOW+MORPH;
+  const stateIdx=Math.floor(elapsed/period)%7;
+  const within=elapsed-stateIdx*period;
+  const nextIdx=(stateIdx+1)%7;
+
+  // Compute morph influences: only two states active at once
+  let morphFrac=0;
+  if(within>SHOW) morphFrac=eio((within-SHOW)/MORPH);
+
+  // Set all morph targets
+  for(const {mesh} of meshes){
+    for(let i=0;i<6;i++) mesh.morphTargetInfluences[i]=0;
+    // state 0 is base (no morph needed for idx=0)
+    // morph target i corresponds to state i+1
+    if(stateIdx===0 && morphFrac>0){
+      mesh.morphTargetInfluences[0]=morphFrac; // toward state1
+    } else if(stateIdx>0){
+      mesh.morphTargetInfluences[stateIdx-1]= morphFrac<1? 1-0 : 1; 
+      // We need to be AT stateIdx, then morph toward nextIdx
+      // Trick: set stateIdx morph=1, nextIdx morph=morphFrac, base=opposite
+      if(stateIdx<7){
+        for(let i=0;i<6;i++) mesh.morphTargetInfluences[i]=0;
+        if(stateIdx-1>=0) mesh.morphTargetInfluences[stateIdx-1]=1-morphFrac;
+        if(nextIdx-1>=0 && nextIdx>0) mesh.morphTargetInfluences[nextIdx-1]=morphFrac;
+      }
+    }
+  }
+
+  // Update colors per fiber based on blending between states
+  for(let fi=0;fi<N;fi++){
+    const hA=allStates[stateIdx][fi].hue;
+    const hB=allStates[nextIdx][fi].hue;
+    const hue=hA+(hB-hA)*morphFrac;
+    meshes[fi].mesh.material.color.setHSL(hue,0.85,0.55);
+  }
+
+  // Auto rotate
+  if(!isDrag){
+    root.rotation.y+=0.003;
+    root.rotation.x=Math.sin(elapsed*0.18)*0.12;
+  } else {
+    root.rotation.y=ry; root.rotation.x=rx;
+  }
+
+  // UI
+  const dispIdx=morphFrac>0.5?nextIdx:stateIdx;
+  lbl.textContent=`${stateIdx+1}/7  ${NAMES[stateIdx]}${morphFrac>0.05?' → '+NAMES[nextIdx]:''}`;
+  sub.textContent=DESCS[stateIdx];
+  const cycleTotal=stateIdx*period+within;
+  prog.style.width=((cycleTotal/CYCLE)*100).toFixed(1)+'%';
+  idx.textContent=`${stateIdx+1}/7`;
+
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(frame);
+</script>
