@@ -1,6 +1,10 @@
 /build
 /.vscode
+/.claude
 *.3dsx
 *.cia
 *.elf
+!topos.core0.04.elf
+!topos.core0.04.3dsx
+!topos.core0.04.cia
 *.smdh
