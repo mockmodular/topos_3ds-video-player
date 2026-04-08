@@ -109,10 +109,5 @@ Requires **devkitARM r65 (GCC 14.2.0)**. r66 / GCC 15.1 causes a data abort cras
 build.bat   (double-click from project root)
 ```
 
-- Must use a login shell (`-lc`) — otherwise `TEMP`/`TMP` is empty and GCC reports permission errors.
-- After changing directories, always run `make clean` first.
-- After replacing `.a` libraries, always run `make clean && make` — devkitPro Makefiles do not track `.a` dependencies.
-
----
 
 There have been so many changes and simplifications that I can no longer keep track of them all.
