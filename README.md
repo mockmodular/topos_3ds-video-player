@@ -1,5 +1,5 @@
 This project is based on Video_player_for_3DS by Core-2-Extreme. Many thanks to Core-2-Extreme for all their work — they are truly amazing.
-
+https://github.com/Core-2-Extreme/Video_player_for_3DS
 
 # topos — Video Player for 3DS
 
