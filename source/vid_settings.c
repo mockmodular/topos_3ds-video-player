@@ -9,6 +9,7 @@
 #include "video_player.h"
 #include "vid_panel_settings.h"
 #include "system/menu.h"
+#include "system/topos_setting.h"
 #include "system/sem.h"
 #include "system/util/decoder.h"
 #include "system/util/file.h"
@@ -36,7 +37,6 @@ uint8_t Vid_get_default_num_of_threads(void)
 void Vid_init_settings(void)
 {
 	vid_player.auto_dim_5s = false;
-	vid_player.remember_video_pos = false;
 	vid_player.fs_browser_root_mode = VID_FS_BROWSER_ROOT_TF;
 	vid_player.ui_mod = true;
 	vid_player.texture_filter_mode = VID_TEX_FILTER_AUTO;
@@ -51,7 +51,6 @@ void Vid_init_settings(void)
 	vid_player.use_hw_color_conversion = VID_HW_CONV_Y2R_X2;
 	vid_player.use_multi_threaded_decoding = true;
 	vid_player.num_of_threads = Vid_get_default_num_of_threads();
-	vid_player.mvd_upload_mode = VID_MVD_UPLOAD_UNROLL4;
 }
 
 void Vid_init_hidden_settings(void)
@@ -94,16 +93,33 @@ uint32_t Vid_load_settings(void)
 	uint8_t settings_valid_until = 0;
 	uint8_t* cache = NULL;
 	uint32_t result = DEF_ERR_OTHER;
-	uint32_t read_size = 0;
 	Str_data out_data[SETTINGS_ELEMENTS_V15] = { 0, };
-	Sem_state state = { 0, };
 
-	Sem_get_state(&state);
-
-	DEF_LOG_RESULT_SMART(result, Util_file_load_from_file("vid_settings.txt", DEF_MENU_MAIN_DIR, &cache, 0x1000, 0, &read_size), (result == DEF_SUCCESS), result);
-
-	if(result == DEF_SUCCESS)
 	{
+		char* boot_vid = NULL;
+		uint32_t boot_len = 0;
+		Topos_md_bundle b = { 0, };
+		bool from_boot = Topos_md_boot_take_vid(&boot_vid, &boot_len);
+
+		if(from_boot)
+		{
+			cache = (uint8_t*)boot_vid;
+			result = (boot_len > 0) ? DEF_SUCCESS : DEF_ERR_OTHER;
+		}
+		else
+		{
+			(void)Topos_md_read_bundle(&b);
+			if(b.vid_len > 0 && b.vid_text)
+			{
+				cache = (uint8_t*)b.vid_text;
+				result = DEF_SUCCESS;
+			}
+			else
+				result = DEF_ERR_OTHER;
+		}
+
+		if(result == DEF_SUCCESS)
+		{
 		const uint8_t settings_element_list[] =
 		{
 			SETTINGS_ELEMENTS_V15,
@@ -135,6 +151,11 @@ uint32_t Vid_load_settings(void)
 				break;
 			}
 		}
+		}
+		if(from_boot)
+			free(boot_vid);
+		else
+			Topos_md_bundle_free(&b);
 	}
 
 	if(result != DEF_SUCCESS)
@@ -198,7 +219,6 @@ uint32_t Vid_load_settings(void)
 	(void)((settings_valid_until > 9) ? strtoul(DEF_STR_NEVER_NULL(&out_data[9]), NULL, 10) : 1); /* 旧版 aspect ratio，已忽略 */
 	if(settings_valid_until >= SETTINGS_ELEMENTS_V9)
 	{
-		vid_player.remember_video_pos = ((settings_valid_until > 10) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[10]), NULL, 10) != 0) : false);
 		vid_player.disable_audio = ((settings_valid_until > 12) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[12]), NULL, 10) != 0) : false);
 		vid_player.disable_video = ((settings_valid_until > 13) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[13]), NULL, 10) != 0) : false);
 		vid_player.num_of_threads = ((settings_valid_until > 15) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[15]), NULL, 10), 0) : Vid_get_default_num_of_threads());
@@ -209,7 +229,6 @@ uint32_t Vid_load_settings(void)
 	}
 	else if(settings_valid_until >= SETTINGS_ELEMENTS_V8)
 	{
-		vid_player.remember_video_pos = ((settings_valid_until > 10) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[10]), NULL, 10) != 0) : false);
 		vid_player.disable_audio = ((settings_valid_until > 12) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[12]), NULL, 10) != 0) : false);
 		vid_player.disable_video = ((settings_valid_until > 13) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[13]), NULL, 10) != 0) : false);
 		vid_player.num_of_threads = ((settings_valid_until > 15) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[15]), NULL, 10), 0) : Vid_get_default_num_of_threads());
@@ -217,7 +236,6 @@ uint32_t Vid_load_settings(void)
 	}
 	else if(settings_valid_until >= SETTINGS_ELEMENTS_V7)
 	{
-		vid_player.remember_video_pos = ((settings_valid_until > 10) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[10]), NULL, 10) != 0) : false);
 		vid_player.disable_audio = ((settings_valid_until > 12) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[12]), NULL, 10) != 0) : false);
 		vid_player.disable_video = ((settings_valid_until > 13) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[13]), NULL, 10) != 0) : false);
 		vid_player.num_of_threads = ((settings_valid_until > 15) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[15]), NULL, 10), 0) : Vid_get_default_num_of_threads());
@@ -225,22 +243,20 @@ uint32_t Vid_load_settings(void)
 	}
 	else
 	{
-		vid_player.remember_video_pos = ((settings_valid_until > 11) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[11]), NULL, 10) != 0) : false);
 		vid_player.disable_audio = ((settings_valid_until > 13) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[13]), NULL, 10) != 0) : false);
 		vid_player.disable_video = ((settings_valid_until > 14) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[14]), NULL, 10) != 0) : false);
 		vid_player.num_of_threads = ((settings_valid_until > 17) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[17]), NULL, 10), 0) : Vid_get_default_num_of_threads());
 		vid_player.auto_dim_5s = false;
 	}
 
-	vid_player.mvd_upload_mode = VID_MVD_UPLOAD_UNROLL4;
 	if(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R)
 		vid_player.use_hw_color_conversion = VID_HW_CONV_Y2R_X2;
 
 	for(uint8_t i = 0; i < DEF_UTIL_ARRAY_NUM_OF_ELEMENTS(out_data); i++)
 		Util_str_free(&out_data[i]);
 
-	if(!DEF_SEM_MODEL_IS_NEW(state.console_model))
-		vid_player.use_hw_decoding = false;
+	/* use_hw_decoding：仅表示「允许尝试 MVD」；真实 O3DS / fake O3DS 均保留用户选择。
+	 * 能否走硬解由 vid_decode 按片源与硬件能力决定，不可用则自动软解。 */
 
 	if(vid_player.volume > 999)
 		vid_player.volume = 100;
@@ -251,9 +267,6 @@ uint32_t Vid_load_settings(void)
 	//	if(vid_player.num_of_threads > NUM_OF_THREADS_MAX || vid_player.num_of_threads < NUM_OF_THREADS_MIN)
 	//		vid_player.num_of_threads = Vid_get_default_num_of_threads();
 	vid_player.num_of_threads = Vid_get_default_num_of_threads();
-
-	free(cache);
-	cache = NULL;
 
 	Vid_log_settings();
 
@@ -287,14 +300,15 @@ uint32_t Vid_save_settings(void)
 	Util_str_format_append(&data, "<7>%" PRIu16 "</7>", vid_player.volume);
 	Util_str_format_append(&data, "<8>%" PRIu8 "</8>", vid_player.seek_duration);
 	Util_str_format_append(&data, "<9>1</9>");
-	Util_str_format_append(&data, "<10>%" PRIu8 "</10>", vid_player.remember_video_pos);
+	Util_str_format_append(&data, "<10>0</10>");
 	Util_str_format_append(&data, "<11>%" PRIu32 "</11>", (uint32_t)0);
 	Util_str_format_append(&data, "<12>%" PRIu8 "</12>", vid_player.disable_audio);
 	Util_str_format_append(&data, "<13>%" PRIu8 "</13>", vid_player.disable_video);
 	Util_str_format_append(&data, "<14>%" PRIu16 "</14>", VID_FIXED_RESTART_PLAYBACK_THRESHOLD);
 	Util_str_format_append(&data, "<15>%" PRIu8 "</15>", vid_player.num_of_threads);
 	Util_str_format_append(&data, "<16>%" PRIu8 "</16>", vid_player.auto_dim_5s);
-	Util_str_format_append(&data, "<17>%" PRIu8 "</17>", (uint8_t)VID_MVD_UPLOAD_UNROLL4);
+	/* <17> legacy: MVD upload mode; fixed Unroll4 (=1) for old parsers. */
+	Util_str_format_append(&data, "<17>%" PRIu8 "</17>", (uint8_t)1);
 	Util_str_format_append(&data, "<18>0</18>");
 	Util_str_format_append(&data, "<19>0</19>");
 	Util_str_format_append(&data, "<20>%" PRIu8 "</20>", vid_player.texture_filter_mode);
@@ -306,7 +320,15 @@ uint32_t Vid_save_settings(void)
 	Util_str_format_append(&data, "<26>%" PRIu8 "</26>", fake_ui_save);
 	Util_str_format_append(&data, "<27>%" PRIu8 "</27>", (uint8_t)vid_player.sbs_swap_eyes);
 
-	DEF_LOG_RESULT_SMART(result, Util_file_save_to_file("vid_settings.txt", DEF_MENU_MAIN_DIR, (uint8_t*)data.buffer, data.capacity, true), (result == DEF_SUCCESS), result);
+	{
+		Topos_md_bundle b = { 0, };
+		(void)Topos_md_read_bundle(&b);
+		DEF_LOG_RESULT_SMART(result, Topos_md_write_bundle(
+			b.sem_text ? b.sem_text : "", b.sem_len,
+			data.buffer, data.length,
+			b.fake_model), (result == DEF_SUCCESS), result);
+		Topos_md_bundle_free(&b);
+	}
 
 	Util_str_free(&data);
 	return result;
@@ -321,7 +343,6 @@ void Vid_log_settings(void)
 	DEF_LOG_BOOL(vid_player.use_multi_threaded_decoding);
 	DEF_LOG_UINT(vid_player.volume);
 	DEF_LOG_UINT(vid_player.seek_duration);
-	DEF_LOG_BOOL(vid_player.remember_video_pos);
 	DEF_LOG_UINT(vid_player.fs_browser_root_mode);
 	DEF_LOG_BOOL(vid_player.ui_mod);
 	DEF_LOG_BOOL(vid_player.sbs_swap_eyes);
@@ -329,5 +350,4 @@ void Vid_log_settings(void)
 	DEF_LOG_BOOL(vid_player.disable_video);
 	DEF_LOG_UINT(vid_player.num_of_threads);
 	DEF_LOG_BOOL(vid_player.auto_dim_5s);
-	DEF_LOG_UINT(vid_player.mvd_upload_mode);
 }

@@ -20,6 +20,9 @@
  * video_x/y_offset_bottom: 底屏缩略图绘制偏移
  * image_width/height_left: 缩略图尺寸
  */
+/** ui_mod 等导致状态区需重配时调用：下次绘制时重新判定 2/4 核 CPU 条布局（非每帧）。 */
+void Vid_panel_player_invalidate_cpu_bar_layout(void);
+
 void Vid_panel_player_draw_status(uint32_t color,
                                    uint32_t back_color,
                                    uint64_t current_ts,

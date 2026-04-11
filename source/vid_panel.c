@@ -11,6 +11,7 @@
 #include <citro3d.h>
 #include <3ds.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,14 +24,13 @@
 #include "system/util/hid_types.h"
 #include "system/util/log.h"
 #include "system/util/util.h"
+#include "system/util/sync.h"
 
 /* ──────────────────────────────────────────────────────────────────────────────
  * Static state (private to this module)
  * ────────────────────────────────────────────────────────────────────────────*/
 static C2D_Font    s_font = NULL;
 static C2D_TextBuf s_tbuf = NULL;
-/* 独立测量 buf：供二分搜索裁剪函数使用，不占 s_tbuf 空间 */
-static C2D_TextBuf s_measure_buf = NULL;
 
 /* 依赖注入上下文（由 Vid_panel_init 写入，之后只读） */
 static VidPanelCtx s_ctx = { 0, };
@@ -38,7 +38,7 @@ static VidPanelCtx s_ctx = { 0, };
 /* Back-reference to previous panel (for Settings "Back" action) */
 static Vid_panel   s_panel_before_setting = VID_PANEL_PLAYER;
 
-/* Quick menu overlay (Player panel, Y key) */
+/* Lawvere 信息覆盖层（仅设置面板） */
 static bool        s_quick_menu_open = false;
 
 /* File browser */
@@ -80,7 +80,8 @@ static Draw_image_data s_files_play_err_ok      = { 0, };
  * ────────────────────────────────────────────────────────────────────────────*/
 
 /* citro2d 的实际 z 行为不可靠用于层叠，全部使用 0.5f，完全依赖绘制顺序决定覆盖关系。
- * 文件打开失败弹窗在底屏流程最后绘制，盖住 chrome。 */
+ * 文件打开失败弹窗在底屏流程最后绘制，盖住 chrome。
+ * Lawvere 层必须 z > VP_Z_CHROME，否则会被设置顶/底栏盖住（曾用 0.4f 导致看不见）。 */
 #define VP_Z_BG       0.5f
 #define VP_Z_ROW_BG   0.5f
 #define VP_Z_ROW_BDR  0.5f
@@ -88,6 +89,8 @@ static Draw_image_data s_files_play_err_ok      = { 0, };
 #define VP_Z_CHROME   0.5f
 #define VP_Z_CHR_TEXT 0.5f
 #define VP_Z_PROGRESS 0.5f
+#define VP_Z_OVERLAY_DIM     0.60f
+#define VP_Z_OVERLAY_LAWVERE 0.62f
 
 static void p_draw_text(const char *str, float x, float y, u32 color)
 {
@@ -102,195 +105,88 @@ static void p_draw_text(const char *str, float x, float y, u32 color)
                  VP_FONT_SCALE, VP_FONT_SCALE, color);
 }
 
-/* 带右边界截断的文字绘制：超出 max_right 时末尾显示"..." */
-static void p_draw_text_clipped(const char *str, float x, float y, float max_right, u32 color)
+/* 文件列表文件名：整串绘制后在 [max_right, scrollbar) 用 clip_bg 矩形盖住超出部分（像素级硬切，可切半字） */
+static void p_draw_text_clipped(const char *str, float x, float y, float max_right, u32 color,
+                                u32 clip_bg, float clip_top, float clip_h)
 {
     if (!str || str[0] == '\0' || !s_tbuf) return;
     float avail = max_right - x;
     if (avail <= 0.0f) return;
 
-    /* 用独立的小 TextBuf 做测量，完全不占用 s_tbuf，避免大量文件名把 s_tbuf 耗尽
-     * 导致 chrome 按钮文字无法 parse（按钮文字消失）。
-     * s_measure_buf 只用于测量宽度，不用于最终绘制。 */
-    if (!s_measure_buf)
-        s_measure_buf = C2D_TextBufNew(256);
-    if (!s_measure_buf) return;
-
-    /* 先测完整字符串宽度 */
-    C2D_Text t;
-    C2D_TextBufClear(s_measure_buf);
-    if (s_font) C2D_TextFontParse(&t, s_font, s_measure_buf, str);
-    else        C2D_TextParse(&t, s_measure_buf, str);
-    C2D_TextOptimize(&t);
+    C2D_TextBufClear(s_tbuf);
+    C2D_Text td;
+    if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, str);
+    else        C2D_TextParse(&td, s_tbuf, str);
+    C2D_TextOptimize(&td);
     float tw, th;
-    C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th);
+    C2D_TextGetDimensions(&td, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th);
     (void)th;
 
-    if (tw <= avail) {
-        /* 不超出：parse 进 s_tbuf 绘制 */
-        C2D_Text td;
-        if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, str);
-        else        C2D_TextParse(&td, s_tbuf, str);
-        C2D_TextOptimize(&td);
-        C2D_DrawText(&td, C2D_WithColor, x, y, VP_Z_ROW_TEXT,
-                     VP_FONT_SCALE, VP_FONT_SCALE, color);
-        return;
-    }
-
-    /* 超出：二分找最长前缀，全部用 s_measure_buf 测量，不碰 s_tbuf */
-    C2D_Text dt;
-    C2D_TextBufClear(s_measure_buf);
-    if (s_font) C2D_TextFontParse(&dt, s_font, s_measure_buf, "...");
-    else        C2D_TextParse(&dt, s_measure_buf, "...");
-    C2D_TextOptimize(&dt);
-    float dw, dh;
-    C2D_TextGetDimensions(&dt, VP_FONT_SCALE, VP_FONT_SCALE, &dw, &dh);
-    (void)dh;
-
-    float budget = avail - dw;
-
-    int best_take = 0;
-    if (budget > 0.0f) {
-        int len = (int)strlen(str);
-        int lo = 0, hi = len;
-        while (lo <= hi) {
-            int mid = lo + (hi - lo) / 2;
-            char tmp[FS_NAME_LEN + 4];
-            snprintf(tmp, sizeof(tmp), "%.*s", mid, str);
-            C2D_Text st;
-            C2D_TextBufClear(s_measure_buf);
-            if (s_font) C2D_TextFontParse(&st, s_font, s_measure_buf, tmp);
-            else        C2D_TextParse(&st, s_measure_buf, tmp);
-            C2D_TextOptimize(&st);
-            float sw, sh;
-            C2D_TextGetDimensions(&st, VP_FONT_SCALE, VP_FONT_SCALE, &sw, &sh);
-            (void)sh;
-            if (sw <= budget) { best_take = mid; lo = mid + 1; }
-            else              { hi = mid - 1; }
-        }
-    }
-
-    /* 最终结果 parse 进 s_tbuf 绘制（只一次，字符数可控） */
-    char tmp[FS_NAME_LEN + 4];
-    snprintf(tmp, sizeof(tmp), "%.*s...", best_take, str);
-    C2D_Text td;
-    if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, tmp);
-    else        C2D_TextParse(&td, s_tbuf, tmp);
-    C2D_TextOptimize(&td);
     C2D_DrawText(&td, C2D_WithColor, x, y, VP_Z_ROW_TEXT,
                  VP_FONT_SCALE, VP_FONT_SCALE, color);
+
+    if (tw > avail) {
+        float mw = (float)VP_SCROLLBAR_X - max_right;
+        if (mw > 0.0f)
+            C2D_DrawRectSolid(max_right, clip_top, VP_Z_ROW_TEXT, mw, clip_h, clip_bg);
+    }
 }
 
-/* 顶栏文字裁剪：
- * keep_left=true：从左起显示，右侧放不下则末尾 "..."（用于 Player 文件名）
- * keep_left=false：保留最右可见后缀，左侧 "..."（用于路径栏 / 设置标题等）
- * Chrome 按钮内文字垂直位置：顶栏路径/文件名与顶栏、底栏按钮共用（VP_FONT_SCALE） */
-static float vp_chrome_label_ty(float btn_y, float btn_h, float text_h)
+/* 顶栏文字区右界 = max_right（VP_CHROME_TOP_TEXT_RIGHT_X），不是屏宽 320。
+ * 在 [max_right, 屏右) 用 path 条色盖住，避免字宽测量小于实际笔画导致越过「路径/标题可显示区」贴向右上按钮。 */
+static void p_chrome_top_mask_right_of_field(float max_right)
 {
-    return btn_y + (btn_h - text_h) * 0.5f + 1.0f;
+    float mw = (float)VP_SCREEN_W - max_right;
+    if (mw > 0.0f)
+        C2D_DrawRectSolid(max_right, 0.0f, VP_Z_CHR_TEXT, mw,
+                          (float)VP_PATH_BAR_H, VP_COL_PATH_BG);
 }
 
+/* 顶栏 path bar 文字（路径 / Player 标题 / 设置顶栏标题）：
+ * 水平范围恒为 [VP_CHROME_TOP_TEXT_LEFT_X, VP_CHROME_TOP_TEXT_RIGHT_X)（与 layout 一致；文件名与路径同一组常量）
+ * keep_left=true（标题）：永远保左；超出则右裁（上遮罩）
+ * keep_left=false（路径）：能放下则保左且右缘不超过 RIGHT；超出则整串右缘对齐 RIGHT（非屏右）、左裁 */
 static void p_draw_text_bar(const char *str, float x, float max_right, u32 color, bool keep_left)
 {
     if (!str || str[0] == '\0' || !s_tbuf) return;
     float avail = max_right - x;
     if (avail <= 0.0f) return;
 
-    /* 使用独立的测量 buf（文件级 s_measure_buf），
-     * 避免二分搜索把 s_tbuf 占满 */
-    if (!s_measure_buf)
-        s_measure_buf = C2D_TextBufNew(256);
-    if (!s_measure_buf) return;
-
-    C2D_Text t;
-    C2D_TextBufClear(s_measure_buf);
-    if (s_font) C2D_TextFontParse(&t, s_font, s_measure_buf, str);
-    else        C2D_TextParse(&t, s_measure_buf, str);
-    C2D_TextOptimize(&t);
+    C2D_TextBufClear(s_tbuf);
+    C2D_Text td;
+    if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, str);
+    else        C2D_TextParse(&td, s_tbuf, str);
+    C2D_TextOptimize(&td);
     float tw, th;
-    C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th);
-    float ty = vp_chrome_label_ty((float)VP_TOP_BTN_Y, (float)VP_CHROME_BTN_H, th);
-
-    if (tw <= avail) {
-        C2D_Text td;
-        if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, str);
-        else        C2D_TextParse(&td, s_tbuf, str);
-        C2D_TextOptimize(&td);
-        C2D_DrawText(&td, C2D_WithColor, x, ty, VP_Z_CHR_TEXT,
-                     VP_FONT_SCALE, VP_FONT_SCALE, color);
-        return;
-    }
-
-    C2D_Text dt;
-    C2D_TextBufClear(s_measure_buf);
-    if (s_font) C2D_TextFontParse(&dt, s_font, s_measure_buf, "...");
-    else        C2D_TextParse(&dt, s_measure_buf, "...");
-    C2D_TextOptimize(&dt);
-    float dw, dh;
-    C2D_TextGetDimensions(&dt, VP_FONT_SCALE, VP_FONT_SCALE, &dw, &dh);
-    (void)dh;
-
-    float budget = avail - dw;
-    int len = (int)strlen(str);
-    int best_take = 0;
+    C2D_TextGetDimensions(&td, VP_CHROME_TOP_TEXT_SCALE, VP_CHROME_TOP_TEXT_SCALE, &tw, &th);
+    float ty = vp_chrome_top_text_ty(th);
 
     if (keep_left) {
-        /* 最长前缀 + "..."（保左裁右） */
-        if (budget > 0.0f) {
-            int lo = 0, hi = len;
-            while (lo <= hi) {
-                int mid = lo + (hi - lo) / 2;
-                char tmp_measure[FS_PATH_LEN + 4];
-                snprintf(tmp_measure, sizeof(tmp_measure), "%.*s", mid, str);
-                C2D_Text st;
-                C2D_TextBufClear(s_measure_buf);
-                if (s_font) C2D_TextFontParse(&st, s_font, s_measure_buf, tmp_measure);
-                else        C2D_TextParse(&st, s_measure_buf, tmp_measure);
-                C2D_TextOptimize(&st);
-                float sw, sh;
-                C2D_TextGetDimensions(&st, VP_FONT_SCALE, VP_FONT_SCALE, &sw, &sh);
-                (void)sh;
-                if (sw <= budget) { best_take = mid; lo = mid + 1; }
-                else              { hi = mid - 1; }
-            }
-        }
-        char tmp[FS_PATH_LEN + 4];
-        snprintf(tmp, sizeof(tmp), "%.*s...", best_take, str);
-        C2D_Text td;
-        if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, tmp);
-        else        C2D_TextParse(&td, s_tbuf, tmp);
-        C2D_TextOptimize(&td);
         C2D_DrawText(&td, C2D_WithColor, x, ty, VP_Z_CHR_TEXT,
-                     VP_FONT_SCALE, VP_FONT_SCALE, color);
+                     VP_CHROME_TOP_TEXT_SCALE, VP_CHROME_TOP_TEXT_SCALE, color);
+        if (tw > avail)
+            p_chrome_top_mask_right_of_field(max_right);
         return;
     }
 
-    /* keep_left=false：最长可见后缀，左侧 "..." */
-    if (budget > 0.0f) {
-        int lo = 0, hi = len;
-        while (lo <= hi) {
-            int mid = lo + (hi - lo) / 2;
-            C2D_Text st;
-            C2D_TextBufClear(s_measure_buf);
-            if (s_font) C2D_TextFontParse(&st, s_font, s_measure_buf, str + (len - mid));
-            else        C2D_TextParse(&st, s_measure_buf, str + (len - mid));
-            C2D_TextOptimize(&st);
-            float sw, sh;
-            C2D_TextGetDimensions(&st, VP_FONT_SCALE, VP_FONT_SCALE, &sw, &sh);
-            (void)sh;
-            if (sw <= budget) { best_take = mid; lo = mid + 1; }
-            else              { hi = mid - 1; }
-        }
+    if (tw <= avail) {
+        C2D_DrawText(&td, C2D_WithColor, x, ty, VP_Z_CHR_TEXT,
+                     VP_CHROME_TOP_TEXT_SCALE, VP_CHROME_TOP_TEXT_SCALE, color);
+        p_chrome_top_mask_right_of_field(max_right);
+        return;
     }
 
-    char tmp[FS_PATH_LEN + 4];
-    snprintf(tmp, sizeof(tmp), "...%s", str + (len - best_take));
-    C2D_Text td;
-    if (s_font) C2D_TextFontParse(&td, s_font, s_tbuf, tmp);
-    else        C2D_TextParse(&td, s_tbuf, tmp);
-    C2D_TextOptimize(&td);
-    C2D_DrawText(&td, C2D_WithColor, x, ty, VP_Z_CHR_TEXT,
-                 VP_FONT_SCALE, VP_FONT_SCALE, color);
+    /* 右缘对齐 max_right（路径区右界）：tx + tw ≈ max_right，不是 VP_SCREEN_W */
+    float tx = max_right - tw;
+    C2D_DrawText(&td, C2D_WithColor, tx, ty, VP_Z_CHR_TEXT,
+                 VP_CHROME_TOP_TEXT_SCALE, VP_CHROME_TOP_TEXT_SCALE, color);
+    if (tx < x) {
+        float mw = x;
+        if (mw > 0.0f)
+            C2D_DrawRectSolid(0.0f, 0.0f, VP_Z_CHR_TEXT, mw,
+                              (float)VP_PATH_BAR_H, VP_COL_PATH_BG);
+    }
+    p_chrome_top_mask_right_of_field(max_right);
 }
 
 /* 三界面共用 chrome 按钮：标签在按钮矩形内水平垂直居中（Citro2D 水平用 AlignCenter 锚在按钮中心；过长则改左对齐并夹紧） */
@@ -329,7 +225,7 @@ static void p_draw_button(float x, float y, float w, float h, const char *label)
 static void p_draw_chrome_top(const char *title, const char *sw_label)
 {
     C2D_DrawRectSolid(0, 0, VP_Z_CHROME, VP_SCREEN_W, VP_PATH_BAR_H, VP_COL_PATH_BG);
-    p_draw_text_bar(title, (float)VP_CHROME_LEFT_TEXT_X, (float)VP_PATH_TEXT_MAX_X,
+    p_draw_text_bar(title, (float)VP_CHROME_TOP_TEXT_LEFT_X, (float)VP_CHROME_TOP_TEXT_RIGHT_X,
                     VP_COL_TEXT, false);
     p_draw_button((float)VP_SW_BTN_X, (float)VP_TOP_BTN_Y,
                   (float)VP_SW_BTN_W, (float)VP_TOP_BTN_H, sw_label);
@@ -474,28 +370,35 @@ static void panel_open_file(const char *filename, const char *directory)
         }
     }
 
+    Util_sync_lock(&vid_player.play_request_pending_lock, UINT64_MAX);
+    if (vid_player.play_request_pending)
+        free(vid_player.play_request_pending);
+    vid_player.play_request_pending = file_data;
+    Util_sync_unlock(&vid_player.play_request_pending_lock);
+
     uint32_t result = DEF_ERR_OTHER;
     DEF_LOG_RESULT_SMART(result,
         Util_queue_add(&vid_player.decode_thread_command_queue,
                        DECODE_THREAD_PLAY_REQUEST,
-                       file_data, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE),
+                       NULL, QUEUE_OP_TIMEOUT_US,
+                       (Queue_option)(QUEUE_OPTION_SEND_TO_FRONT | QUEUE_OPTION_DO_NOT_ADD_IF_EXIST)),
         (result == DEF_SUCCESS), result);
-
-    if (result != DEF_SUCCESS)
-        free(file_data);
 }
 
 static void p_draw_files_play_error_overlay(void)
 {
     if (!s_files_play_err_visible)
         return;
+    if (!s_tbuf)
+        return;
 
-    if (s_tbuf) C2D_TextBufClear(s_tbuf);
-
-    const float mx  = (float)VP_OVERLAY_MARGIN;
-    const float pw  = (float)VP_SCREEN_W - mx * 2.0f;
-    const float ph  = (float)VP_OVERLAY_PANEL_H;
-    const float py  = ((float)VP_SCREEN_H - ph) * 0.5f;
+    const float frame_x = (float)VP_OVERLAY_FRAME_X;
+    const float frame_w = (float)VP_OVERLAY_FRAME_W;
+    const float inner_x = (float)VP_OVERLAY_INNER_X;
+    const float inner_w = (float)VP_OVERLAY_INNER_W;
+    const float ph      = (float)VP_OVERLAY_PANEL_H;
+    const float py      = ((float)VP_SCREEN_H - ph) * 0.5f;
+    const float content_cx = VP_OVERLAY_CONTENT_CENTER_XF;
 
     const u32 col_bg     = C2D_Color32(0x18, 0x1E, 0x2C, 0xFF);
     const u32 col_bdr    = C2D_Color32(0x50, 0x60, 0x80, 0xFF);
@@ -505,59 +408,86 @@ static void p_draw_files_play_error_overlay(void)
                            : C2D_Color32(0x28, 0x32, 0x48, 0xFF);
     const u32 col_btn_bd = C2D_Color32(0x70, 0x88, 0xB0, 0xFF);
 
-    C2D_DrawRectSolid(mx + 1, py + 1, 0.6f, pw - 2, ph - 2, col_bg);
-    C2D_DrawRectSolid(mx,          py,          0.6f, pw, 1,  col_bdr);
-    C2D_DrawRectSolid(mx,          py + ph - 1, 0.6f, pw, 1,  col_bdr);
-    C2D_DrawRectSolid(mx,          py,          0.6f, 1,  ph, col_bdr);
-    C2D_DrawRectSolid(mx + pw - 1, py,          0.6f, 1,  ph, col_bdr);
+    const float bd = (float)VP_OVERLAY_BORDER_PX;
+    C2D_DrawRectSolid(inner_x, py + bd, 0.6f, inner_w, ph - 2.0f * bd, col_bg);
+    C2D_DrawRectSolid(frame_x,          py,          0.6f, frame_w, 1,     col_bdr);
+    C2D_DrawRectSolid(frame_x,          py + ph - 1, 0.6f, frame_w, 1,     col_bdr);
+    C2D_DrawRectSolid(frame_x,          py,          0.6f, 1,       ph, col_bdr);
+    C2D_DrawRectSolid(frame_x + frame_w - 1.0f, py,  0.6f, 1,       ph, col_bdr);
 
-    const float line_h  = VP_FONT_SCALE * 24.0f;
-    const float btn_w   = (float)VP_CHROME_BTN_W;
-    const float btn_h   = (float)VP_CHROME_BTN_H;
-    const float gap     = 10.0f;
-    const float total_h = line_h + line_h + gap + btn_h;
-    float cy = py + (ph - total_h) * 0.5f;
+    const float btn_w = (float)VP_CHROME_BTN_W;
+    const float btn_h = (float)VP_CHROME_BTN_H;
+    /* 用实测字高排布，避免固定 line_h 小于真实 th 导致行叠在一起、整块在面板里偏上/偏下 */
+    const float line_gap   = 6.0f;
+    const float gap_above_btn = 12.0f;
 
+    float tw1 = 0, th1 = 0, tw2 = 0, th2 = 0;
+    C2D_TextBufClear(s_tbuf);
     {
         C2D_Text t;
         const char *msg = "Unable to open file.";
         if (s_font) C2D_TextFontParse(&t, s_font, s_tbuf, msg);
         else        C2D_TextParse(&t, s_tbuf, msg);
         C2D_TextOptimize(&t);
-        float tw, th; C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th); (void)th;
-        C2D_DrawText(&t, C2D_WithColor, mx + (pw - tw) * 0.5f, cy, 0.7f,
-                     VP_FONT_SCALE, VP_FONT_SCALE, col_white);
+        C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw1, &th1);
     }
-    cy += line_h;
+    C2D_TextBufClear(s_tbuf);
     {
         C2D_Text t;
         const char *msg = "Format not supported";
         if (s_font) C2D_TextFontParse(&t, s_font, s_tbuf, msg);
         else        C2D_TextParse(&t, s_tbuf, msg);
         C2D_TextOptimize(&t);
-        float tw, th; C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th); (void)th;
-        C2D_DrawText(&t, C2D_WithColor, mx + (pw - tw) * 0.5f, cy, 0.7f,
+        C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw2, &th2);
+    }
+
+    const float total_h = th1 + line_gap + th2 + gap_above_btn + btn_h;
+    float y_top = py + (ph - total_h) * 0.5f;
+    if (y_top < py + 2.0f)
+        y_top = py + 2.0f;
+
+    C2D_TextBufClear(s_tbuf);
+    {
+        C2D_Text t;
+        const char *msg = "Unable to open file.";
+        if (s_font) C2D_TextFontParse(&t, s_font, s_tbuf, msg);
+        else        C2D_TextParse(&t, s_tbuf, msg);
+        C2D_TextOptimize(&t);
+        C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, content_cx, y_top, 0.7f,
                      VP_FONT_SCALE, VP_FONT_SCALE, col_white);
     }
-    cy += line_h + gap;
+    C2D_TextBufClear(s_tbuf);
+    {
+        const float y2 = y_top + th1 + line_gap;
+        C2D_Text t;
+        const char *msg = "Format not supported";
+        if (s_font) C2D_TextFontParse(&t, s_font, s_tbuf, msg);
+        else        C2D_TextParse(&t, s_tbuf, msg);
+        C2D_TextOptimize(&t);
+        C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, content_cx, y2, 0.7f,
+                     VP_FONT_SCALE, VP_FONT_SCALE, col_white);
+    }
 
-    const float bx = mx + (pw - btn_w) * 0.5f;
-    const float by = cy;
+    /* 按钮矩形贴像素栅格，水平中心与内芯中心一致（避免纯 float 半像素漂移） */
+    const float bx = floorf(content_cx - btn_w * 0.5f + 0.5f);
+    const float by = y_top + th1 + line_gap + th2 + gap_above_btn;
     C2D_DrawRectSolid(bx,             by,             0.8f, btn_w, btn_h, col_btn_bg);
     C2D_DrawRectSolid(bx,             by,             0.8f, btn_w, 1,     col_btn_bd);
     C2D_DrawRectSolid(bx,             by + btn_h - 1, 0.8f, btn_w, 1,     col_btn_bd);
     C2D_DrawRectSolid(bx,             by,             0.8f, 1,     btn_h, col_btn_bd);
     C2D_DrawRectSolid(bx + btn_w - 1, by,             0.8f, 1,     btn_h, col_btn_bd);
+    C2D_TextBufClear(s_tbuf);
     {
         C2D_Text t;
         if (s_font) C2D_TextFontParse(&t, s_font, s_tbuf, "OK");
         else        C2D_TextParse(&t, s_tbuf, "OK");
         C2D_TextOptimize(&t);
         float tw, th; C2D_TextGetDimensions(&t, VP_FONT_SCALE, VP_FONT_SCALE, &tw, &th);
-        float ltx = bx + (btn_w - tw) * 0.5f;
+        (void)tw;
+        /* 水平：与按钮矩形同一中心线；垂直：与顶栏按钮一致 */
+        const float btn_cx = bx + btn_w * 0.5f;
         float lty = by + (btn_h - th) * 0.5f + 1.0f;
-        if (ltx < bx + 2.0f) ltx = bx + 2.0f;
-        C2D_DrawText(&t, C2D_WithColor, ltx, lty, 0.9f,
+        C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, btn_cx, lty, 0.9f,
                      VP_FONT_SCALE, VP_FONT_SCALE, col_white);
     }
 
@@ -654,8 +584,14 @@ static void draw_files_panel(void)
             }
 
             u32 color = (e->type == FS_DIR) ? VP_COL_DIR : VP_COL_TEXT;
+            u32 clip_bg = VP_COL_BG;
+            if (is_flash)
+                clip_bg = VP_COL_FLASH;
+            else if (is_selected)
+                clip_bg = VP_COL_HIGHLIGHT;
             p_draw_text_clipped(label, (float)VP_CHROME_LEFT_TEXT_X, row_y + 2.0f,
-                                (float)(VP_SCROLLBAR_X - VP_TEXT_PAD), color);
+                                (float)(VP_SCROLLBAR_X - VP_TEXT_PAD), color, clip_bg,
+                                row_y, (float)VP_ROW_H);
         }
     }
 
@@ -685,8 +621,8 @@ static void draw_files_panel(void)
     }
 
     /* Chrome z=VP_Z_CHROME(0.5f) > 行内容 z=VP_Z_ROW_TEXT(0.3f)，盖住溢出内容 */
-    p_draw_chrome_footer("back(b)", "setting(s)");
-    p_draw_chrome_top(s_path, "player(a)");
+    p_draw_chrome_footer("back(b)", "player(x)");
+    p_draw_chrome_top(s_path, "setting(s)");
 }
 
 static void draw_setting_panel(void)
@@ -816,8 +752,8 @@ static void draw_setting_panel(void)
     }
 
     /* Chrome z=VP_Z_CHROME(0.5f) > 行内容 z=VP_Z_ROW_TEXT(0.3f)，盖住溢出内容 */
-    p_draw_chrome_footer("back(b)", "toggle(s)");
-    p_draw_chrome_top(title, "topos");
+    p_draw_chrome_footer("back(b)", "topos(y)");
+    p_draw_chrome_top(title, "toggle(s)");
 }
 
 
@@ -841,8 +777,7 @@ void Vid_panel_init(VidPanelCtx ctx)
     }
     if (!s_font) s_font = C2D_FontLoadSystem(CFG_REGION_USA);
 
-    s_tbuf        = C2D_TextBufNew(VP_TEXT_BUF_CHARS);
-    s_measure_buf = C2D_TextBufNew(256);
+    s_tbuf = C2D_TextBufNew(VP_TEXT_BUF_CHARS);
 
     vid_panel_settings_init();
 
@@ -866,8 +801,7 @@ void Vid_panel_init(VidPanelCtx ctx)
 
 void Vid_panel_exit(void)
 {
-    if (s_tbuf)        { C2D_TextBufDelete(s_tbuf);        s_tbuf        = NULL; }
-    if (s_measure_buf) { C2D_TextBufDelete(s_measure_buf); s_measure_buf = NULL; }
+    if (s_tbuf) { C2D_TextBufDelete(s_tbuf); s_tbuf = NULL; }
     if (s_font)  { C2D_FontFree(s_font);        s_font  = NULL; }
     s_touch_x0 = s_touch_y0 = -1;
     s_quick_menu_open = false;
@@ -878,7 +812,7 @@ void Vid_panel_exit(void)
 void Vid_panel_draw_overlay(void)
 {
     if (!s_quick_menu_open || !s_tbuf) return;
-    if (vid_player.panel != VID_PANEL_PLAYER) return;
+    if (vid_player.panel != VID_PANEL_SETTING) return;
 
     C2D_TextBufClear(s_tbuf);
 
@@ -887,13 +821,18 @@ void Vid_panel_draw_overlay(void)
     const float ph = (float)VP_OVERLAY_PANEL_H;
     const float py = ((float)VP_SCREEN_H - ph) * 0.5f;
 
+    /* 全屏半透明遮罩：盖住整个设置界面，Lawvere 对话框再叠在上面 */
+    C2D_DrawRectSolid(0.0f, 0.0f, VP_Z_OVERLAY_DIM,
+                      (float)VP_SCREEN_W, (float)VP_SCREEN_H,
+                      C2D_Color32(0x00, 0x00, 0x00, 0xA0));
+
     /* Panel fill */
-    C2D_DrawRectSolid(mx + 1, py + 1, 0.4f, pw - 2, ph - 2, VP_COL_OVERLAY_BG);
+    C2D_DrawRectSolid(mx + 1, py + 1, VP_Z_OVERLAY_LAWVERE, pw - 2, ph - 2, VP_COL_OVERLAY_BG);
     /* Border */
-    C2D_DrawRectSolid(mx,          py,          0.4f, pw, 1,  VP_COL_SEP);
-    C2D_DrawRectSolid(mx,          py + ph - 1, 0.4f, pw, 1,  VP_COL_SEP);
-    C2D_DrawRectSolid(mx,          py,          0.4f, 1,  ph, VP_COL_SEP);
-    C2D_DrawRectSolid(mx + pw - 1, py,          0.4f, 1,  ph, VP_COL_SEP);
+    C2D_DrawRectSolid(mx,          py,          VP_Z_OVERLAY_LAWVERE, pw, 1,  VP_COL_SEP);
+    C2D_DrawRectSolid(mx,          py + ph - 1, VP_Z_OVERLAY_LAWVERE, pw, 1,  VP_COL_SEP);
+    C2D_DrawRectSolid(mx,          py,          VP_Z_OVERLAY_LAWVERE, 1,  ph, VP_COL_SEP);
+    C2D_DrawRectSolid(mx + pw - 1, py,          VP_Z_OVERLAY_LAWVERE, 1,  ph, VP_COL_SEP);
 
     /* Centered text (horizontal: panel center; vertical: block centered in panel) */
     const char *lines[] = {
@@ -913,12 +852,14 @@ void Vid_panel_draw_overlay(void)
         C2D_TextOptimize(&t);
         u32 col = (i == 1) ? VP_COL_TEXT : VP_COL_FOOTER_TEXT;
         C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, cx, start_y + i * line_h,
-                     0.4f, VP_FONT_SCALE, VP_FONT_SCALE, col);
+                     VP_Z_OVERLAY_LAWVERE, VP_FONT_SCALE, VP_FONT_SCALE, col);
     }
 }
 
 void Vid_panel_toggle_quick_menu(void)
 {
+    if (vid_player.panel != VID_PANEL_SETTING)
+        return;
     s_quick_menu_open = !s_quick_menu_open;
 }
 
@@ -952,12 +893,12 @@ void Vid_panel_draw_player_chrome(void)
 
     /* Top-left: basename — always shown when playing (not gated by ui mod). */
     if (vid_player.state != PLAYER_STATE_IDLE && vid_player.file.name[0] != '\0')
-        p_draw_text_bar(vid_player.file.name, (float)VP_CHROME_LEFT_TEXT_X,
-                        (float)VP_PATH_TEXT_MAX_X, VP_COL_TEXT, true);
+        p_draw_text_bar(vid_player.file.name, (float)VP_CHROME_TOP_TEXT_LEFT_X,
+                        (float)VP_CHROME_TOP_TEXT_RIGHT_X, VP_COL_TEXT, true);
 
-    /* Top-right: folder -> files */
+    /* Top-right: settings（与 Start 一致） */
     p_draw_button((float)VP_SW_BTN_X, (float)VP_TOP_BTN_Y,
-                  (float)VP_SW_BTN_W, (float)VP_TOP_BTN_H, "folder(x)");
+                  (float)VP_SW_BTN_W, (float)VP_TOP_BTN_H, "setting(s)");
 
     /* FPS — only in full ui mod */
     if (vid_player.ui_mod) {
@@ -971,13 +912,13 @@ void Vid_panel_draw_player_chrome(void)
             C2D_TextParse(&ft, s_tbuf, fps_buf);
         C2D_TextOptimize(&ft);
         float ftw, fth;
-        C2D_TextGetDimensions(&ft, VP_FONT_SCALE, VP_FONT_SCALE, &ftw, &fth);
-        (void)fth;
+        C2D_TextGetDimensions(&ft, DEF_DRAW_TEXT_C2D_SCALE, DEF_DRAW_TEXT_C2D_SCALE, &ftw, &fth);
         float ftx = (float)(VP_SW_BTN_X + VP_SW_BTN_W) - (float)VP_CHROME_BTN_MARGIN_X - ftw
                     + (float)VP_PLAYER_FPS_DX;
-        float fty = (float)VP_PLAYER_FPS_Y + (float)VP_PLAYER_FPS_DY;
+        /* 与 V 编解码首行同 y；字号与 Draw(DEF_DRAW_TEXT_SCALE) 在 draw.c 内 ×1.2 后一致；x 仍为 setting 侧右对齐。 */
+        float fty = (float)VP_PLAYER_STATUS_ROW_V_Y;
         C2D_DrawText(&ft, C2D_WithColor, ftx, fty, VP_Z_CHR_TEXT,
-                     VP_FONT_SCALE, VP_FONT_SCALE, VP_COL_FPS);
+                     DEF_DRAW_TEXT_C2D_SCALE, DEF_DRAW_TEXT_C2D_SCALE, VP_COL_FPS);
     }
 
     /* Footer buttons */
@@ -986,7 +927,7 @@ void Vid_panel_draw_player_chrome(void)
                   (float)VP_BACK_BTN_W, (float)VP_FOOTER_BTN_H,
                   is_paused ? "play(a)" : "pause(a)");
     p_draw_button((float)VP_SET_BTN_X, fy + (float)VP_FOOTER_BTN_PAD_Y,
-                  (float)VP_SET_BTN_W, (float)VP_FOOTER_BTN_H, "info(y)");
+                  (float)VP_SET_BTN_W, (float)VP_FOOTER_BTN_H, "file(x)");
 }
 
 void Vid_panel_draw_bottom(void)
@@ -1013,8 +954,18 @@ void Vid_panel_go_files(void)
 
 void Vid_panel_go_player(void)
 {
+    s_quick_menu_open = false;
     vid_player.panel = VID_PANEL_PLAYER;
     vid_player.auto_full_screen_count = 0;
+}
+
+void Vid_panel_toggle_player_files(void)
+{
+    s_seek_x = -1;
+    if (vid_player.panel == VID_PANEL_FILES)
+        Vid_panel_go_player();
+    else if (vid_player.panel == VID_PANEL_PLAYER)
+        Vid_panel_go_files();
 }
 
 void Vid_panel_go_settings(void)
@@ -1032,6 +983,7 @@ void Vid_panel_leave_settings(void)
 {
     if (vid_player.panel != VID_PANEL_SETTING)
         return;
+    s_quick_menu_open = false;
     s_set_drag    = 0;
     s_slider_row  = -1;
     /* Keep settings subpage / selection / scroll across panel switches */
@@ -1098,7 +1050,7 @@ static int hit_set_btn(int px, int py)
          && px <= VP_SET_BTN_X + VP_SET_BTN_W);
 }
 
-/* Y 键 Lawvere 弹窗区域，与 Vid_panel_draw_overlay 几何一致 */
+/* Lawvere 弹窗区域（设置面板），与 Vid_panel_draw_overlay 几何一致 */
 static int vp_quick_overlay_hit(int px, int py)
 {
     const int mx  = VP_OVERLAY_MARGIN;
@@ -1148,6 +1100,12 @@ void Vid_panel_list_press(int px, int py)
         else
             s_fs_drag = 1;  /* tentative: may become content drag */
     } else if (vid_player.panel == VID_PANEL_SETTING) {
+        if (s_quick_menu_open && vp_quick_overlay_hit(px, py)) {
+            s_quick_menu_open = false;
+            s_touch_x0    = s_touch_y0 = -1;
+            s_touch_state = 0;
+            return;
+        }
         /* Record scroll position at press for content drag */
         VpSettingsView sv;
         vid_panel_settings_fill_view(&sv);
@@ -1190,15 +1148,8 @@ void Vid_panel_list_press(int px, int py)
             }
         }
     } else if (vid_player.panel == VID_PANEL_PLAYER) {
-        /* Lawvere 弹窗：手指落下点在弹窗内则立即关闭（不按松手） */
-        if (s_quick_menu_open && vp_quick_overlay_hit(px, py)) {
-            s_quick_menu_open = false;
-            s_touch_x0    = s_touch_y0 = -1;
-            s_touch_state = 0;
-            return;
-        }
         /* 点主内容区（非 chrome/进度条/上下条带）：与 Select 相同，触发下屏息屏 */
-        if (!s_quick_menu_open && !vp_player_hit_chrome_controls(px, py)) {
+        if (!vp_player_hit_chrome_controls(px, py)) {
             (void)Vid_cmd_push((VidCmd){ .id = VID_CMD_ENTER_FULLSCREEN });
             /* 息屏后路由不再投递 LIST_RELEASE，避免残留 press 状态 */
             s_touch_x0 = s_touch_y0 = -1;
@@ -1344,20 +1295,20 @@ void Vid_panel_list_release(int px, int py)
             return;
         }
         if (!was_tap) return;
-        if (hit_top_switch(tap_x, tap_y)) { Vid_panel_go_files();        return; }
+        if (hit_top_switch(tap_x, tap_y)) { Vid_panel_go_settings();         return; }
         if (hit_back_btn(tap_x, tap_y)) {
             (void)Vid_cmd_push((VidCmd){ .id = VID_CMD_TOGGLE_PLAY });
             return;
         }
-        if (hit_set_btn(tap_x, tap_y))  { Vid_panel_toggle_quick_menu(); return; }
+        if (hit_set_btn(tap_x, tap_y))  { Vid_panel_toggle_player_files(); return; }
         return;
     } else if (vid_player.panel == VID_PANEL_FILES) {
         int was_fs_drag = s_fs_drag;
         s_fs_drag = 0;
 
-        if (hit_top_switch(tap_x, tap_y)) { Vid_panel_go_player();   return; }
+        if (hit_top_switch(tap_x, tap_y)) { Vid_panel_go_settings(); return; }
         if (hit_back_btn(tap_x, tap_y))   { Vid_panel_back();        return; }
-        if (hit_set_btn(tap_x, tap_y))    { Vid_panel_go_settings(); return; }
+        if (hit_set_btn(tap_x, tap_y))    { Vid_panel_go_player();   return; }
 
         /* Scrollbar column: snap on tap, ignore on drag */
         if (tap_x >= VP_SCROLLBAR_X) {
@@ -1411,14 +1362,17 @@ void Vid_panel_list_release(int px, int py)
 
         /* Chrome 按钮：始终在 release 时响应（back/setting 导航）——
          * 这些不是行 widget，不受 press-down 消费逻辑影响。 */
-        if (hit_top_switch(tap_x, tap_y)) { return; /* topos: no-op */ }
+        if (hit_top_switch(tap_x, tap_y)) {
+            Vid_panel_leave_settings();
+            return;
+        }
         if (hit_back_btn(tap_x, tap_y)) {
             if (vid_panel_settings_can_go_back())
                 vid_panel_settings_go_back();
             return;
         }
         if (hit_set_btn(tap_x, tap_y)) {
-            Vid_panel_leave_settings();
+            Vid_panel_toggle_quick_menu();
             return;
         }
 
@@ -1544,8 +1498,9 @@ void Vid_panel_draw_bottom_screen(bool     is_bottom_lcd_on,
         Vid_panel_draw_bottom();
         if (is_err_shown)
             Util_err_draw();
-        Vid_panel_draw_overlay();
         p_draw_files_play_error_overlay();
+        /* Lawvere 最后绘制：z 高于 chrome，且盖住 Util_err / 文件错误层 */
+        Vid_panel_draw_overlay();
     }
     else
     {
@@ -1585,7 +1540,6 @@ void Vid_panel_draw_bottom_screen(bool     is_bottom_lcd_on,
         if (is_err_shown)
             Util_err_draw();
 
-        Vid_panel_draw_overlay();
         Vid_panel_draw_player_chrome();
     }
 }

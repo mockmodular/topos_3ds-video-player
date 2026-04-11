@@ -54,14 +54,6 @@ void Util_err_set_show_flag(bool flag);
 void Util_err_clear_error_message(void);
 
 /**
- * @brief Save error message to SD card.
- * After saving error message, error show flag will be set to false.
- * Do nothing if error API is not initialized.
- * @warning Thread dangerous (untested).
-*/
-void Util_err_save_error(void);
-
-/**
  * @brief Convert result code to error message.
  * Always return empty string ("") if error API is not initialized.
  * @note Thread safe.

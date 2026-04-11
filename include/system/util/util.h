@@ -65,16 +65,6 @@ uint32_t Util_parse_file(const char* source_data, uint32_t expected_items, Str_d
 uint32_t Util_convert_seconds_to_time(double input_seconds, Str_data* time_string);
 
 /**
- * @brief Load a message.
- * @param file_name (in) File name in romfs:/gfx/msg/.
- * @param out_msg (out) Array for parsed message.
- * @param num_of_msg (in) Number of message.
- * @return On success DEF_SUCCESS, on failure DEF_ERR_*.
- * @note Thread safe.
-*/
-uint32_t Util_load_msg(const char* file_name, Str_data* out_msg, uint32_t num_of_msg);
-
-/**
  * @brief Convert [\n](new line), ["](double quote) and [\](backslash) to escape expression.
  * @param text (in) Input text.
  * @param escaped_text (out) Escaped text.
@@ -122,6 +112,9 @@ uint32_t Util_check_free_ram(void);
  * @note Thread safe.
 */
 bool Util_is_core_available(uint8_t core_id);
+
+/** 已初始化的 util 上，统计 0..3 号 CPU 中 thread 探测为可用的数量（用于 N/O 机型档，与 CFG 无关）。 */
+uint8_t Util_available_cpu_core_count(void);
 
 /**
  * @brief Sleep thread.

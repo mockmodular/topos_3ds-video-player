@@ -20,9 +20,6 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "system/util/str.h"
 #include "system/util/util.h"
 
-//Forward declaration for file-private helper.
-static void Vid_update_decoding_statistics(double decoding_time, bool is_key_frame);
-
 // RGBA8 Morton x-delta table (pixel_size=4, period 4 per 8 px).
 static const uint16_t s_mvd_ilx[4] = {16, 48, 16, 176};
 
@@ -56,71 +53,6 @@ static void vid_sbs_morton_at_half(const uint8_t* mvd, uint32_t full_width, uint
 			*(uint32_t*)(l_dst + off + 4) = l_src[x + 1] | 0x000000FFu;
 			*(uint32_t*)(r_dst + off)     = r_src[x]     | 0x000000FFu;
 			*(uint32_t*)(r_dst + off + 4) = r_src[x + 1] | 0x000000FFu;
-			c3d_pos += s_mvd_ilx[cnt_x & 3];
-			cnt_x++;
-		}
-		c3d_offset += ily[cnt_y & 7];
-		cnt_y++;
-	}
-}
-
-static void Vid_mvd_sbs_morton(const uint8_t* mvd, uint32_t full_width, uint32_t height, C3D_Tex* l_tex, C3D_Tex* r_tex)
-{
-	uint32_t half_w = full_width / 2;
-	uint16_t tex_w  = (uint16_t)l_tex->width;
-	uint16_t ily[8] = {8, 24, 8, 88, 8, 24, 8, 0};
-	ily[7] = (uint16_t)((uint32_t)tex_w * 32u - 168u);
-
-	uint8_t* l_dst      = (uint8_t*)l_tex->data;
-	uint8_t* r_dst      = (uint8_t*)r_tex->data;
-	uint32_t c3d_offset = 0;
-	uint8_t  cnt_y      = 0;
-
-	for(uint32_t y = 0; y < height; y++)
-	{
-		const uint32_t* l_src = (const uint32_t*)(mvd + y * full_width * 4);
-		const uint32_t* r_src = l_src + half_w;
-		uint32_t c3d_pos = 0;
-		uint8_t  cnt_x   = 0;
-
-		for(uint32_t x = 0; x < half_w; x += 2)
-		{
-			uint32_t off = c3d_pos + c3d_offset;
-			*(uint32_t*)(l_dst + off)     = l_src[x]     | 0x000000FFu;
-			*(uint32_t*)(l_dst + off + 4) = l_src[x + 1] | 0x000000FFu;
-			*(uint32_t*)(r_dst + off)     = r_src[x]     | 0x000000FFu;
-			*(uint32_t*)(r_dst + off + 4) = r_src[x + 1] | 0x000000FFu;
-			c3d_pos += s_mvd_ilx[cnt_x & 3];
-			cnt_x++;
-		}
-		c3d_offset += ily[cnt_y & 7];
-		cnt_y++;
-	}
-}
-
-// MVD 2D (non-SBS): one-pass alpha fix + Morton tiling into a single texture.
-static void Vid_mvd_2d_morton(const uint8_t* mvd, uint32_t width, uint32_t height, C3D_Tex* tex)
-{
-	uint16_t tex_w = (uint16_t)tex->width;
-	uint16_t ily[8] = {8, 24, 8, 88, 8, 24, 8, 0};
-	ily[7] = (uint16_t)((uint32_t)tex_w * 32u - 168u);
-
-	uint8_t* dst        = (uint8_t*)tex->data;
-	uint32_t c3d_offset = 0;
-	uint8_t  cnt_y      = 0;
-
-	for(uint32_t y = 0; y < height; y++)
-	{
-		const uint32_t* src = (const uint32_t*)(mvd + y * width * 4);
-		uint32_t c3d_pos = 0;
-		uint8_t  cnt_x   = 0;
-
-		for(uint32_t x = 0; x < width; x += 2)
-		{
-			uint32_t off = c3d_pos + c3d_offset;
-			// ABGR32 byte[0]=A → 0x000000FF in little-endian uint32.
-			*(uint32_t*)(dst + off)     = src[x]     | 0x000000FFu;
-			*(uint32_t*)(dst + off + 4) = src[x + 1] | 0x000000FFu;
 			c3d_pos += s_mvd_ilx[cnt_x & 3];
 			cnt_x++;
 		}
@@ -294,98 +226,6 @@ static void Vid_mvd_2d_morton_opt(const uint8_t* mvd, uint32_t width, uint32_t h
 	}
 }
 
-// ---- DMA: strided copy with alpha fix to staging buffer, then GX_DisplayTransfer ----
-// staging buffer (mvd_stage[eye]) must be pre-allocated at tex_width*tex_height*4 bytes.
-// GX_DisplayTransfer: linear staging → tiled texture (both same tex_width×tex_height dimensions).
-// After transfer, gspWaitForPPF() ensures DMA is complete before GPU samples texture.
-
-static void vid_sbs_dma_at_half(const uint8_t* mvd, uint32_t full_width, uint32_t half_w, uint32_t height,
-                              C3D_Tex* l_tex, C3D_Tex* r_tex,
-                              uint8_t* stage_l, uint8_t* stage_r)
-{
-	uint32_t tex_w    = l_tex->width;
-	uint32_t stage_stride = tex_w;	// staging row stride in pixels
-
-	for(uint32_t y = 0; y < height; y++)
-	{
-		const uint32_t* l_src = (const uint32_t*)(mvd + y * full_width * 4);
-		const uint32_t* r_src = l_src + half_w;
-		uint32_t* l_row = (uint32_t*)(stage_l + y * stage_stride * 4);
-		uint32_t* r_row = (uint32_t*)(stage_r + y * stage_stride * 4);
-		for(uint32_t x = 0; x < half_w; x++)
-		{
-			l_row[x] = l_src[x] | 0xFFu;
-			r_row[x] = r_src[x] | 0xFFu;
-		}
-	}
-
-	uint32_t tex_h = l_tex->height;
-	GSPGPU_FlushDataCache(stage_l, tex_w * tex_h * 4);
-	GSPGPU_FlushDataCache(stage_r, tex_w * tex_h * 4);
-	GX_DisplayTransfer((u32*)stage_l, GX_BUFFER_DIM(tex_w, tex_h),
-	                   (u32*)l_tex->data, GX_BUFFER_DIM(tex_w, tex_h),
-	                   GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
-	GX_DisplayTransfer((u32*)stage_r, GX_BUFFER_DIM(tex_w, tex_h),
-	                   (u32*)r_tex->data, GX_BUFFER_DIM(tex_w, tex_h),
-	                   GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
-	gspWaitForPPF();
-}
-
-static void Vid_mvd_sbs_dma(const uint8_t* mvd, uint32_t full_width, uint32_t height,
-                              C3D_Tex* l_tex, C3D_Tex* r_tex,
-                              uint8_t* stage_l, uint8_t* stage_r)
-{
-	uint32_t half_w       = full_width / 2;
-	uint32_t tex_w        = l_tex->width;
-	uint32_t stage_stride = tex_w;
-
-	for(uint32_t y = 0; y < height; y++)
-	{
-		const uint32_t* l_src = (const uint32_t*)(mvd + y * full_width * 4);
-		const uint32_t* r_src = l_src + half_w;
-		uint32_t* l_row = (uint32_t*)(stage_l + y * stage_stride * 4);
-		uint32_t* r_row = (uint32_t*)(stage_r + y * stage_stride * 4);
-		for(uint32_t x = 0; x < half_w; x++)
-		{
-			l_row[x] = l_src[x] | 0xFFu;
-			r_row[x] = r_src[x] | 0xFFu;
-		}
-	}
-
-	uint32_t tex_h = l_tex->height;
-	GSPGPU_FlushDataCache(stage_l, tex_w * tex_h * 4);
-	GSPGPU_FlushDataCache(stage_r, tex_w * tex_h * 4);
-	GX_DisplayTransfer((u32*)stage_l, GX_BUFFER_DIM(tex_w, tex_h),
-	                   (u32*)l_tex->data, GX_BUFFER_DIM(tex_w, tex_h),
-	                   GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
-	GX_DisplayTransfer((u32*)stage_r, GX_BUFFER_DIM(tex_w, tex_h),
-	                   (u32*)r_tex->data, GX_BUFFER_DIM(tex_w, tex_h),
-	                   GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
-	gspWaitForPPF();
-}
-
-static void Vid_mvd_2d_dma(const uint8_t* mvd, uint32_t width, uint32_t height,
-                            C3D_Tex* tex, uint8_t* stage)
-{
-	uint32_t tex_w        = tex->width;
-	uint32_t stage_stride = tex_w;
-
-	for(uint32_t y = 0; y < height; y++)
-	{
-		const uint32_t* src = (const uint32_t*)(mvd + y * width * 4);
-		uint32_t* row = (uint32_t*)(stage + y * stage_stride * 4);
-		for(uint32_t x = 0; x < width; x++)
-			row[x] = src[x] | 0xFFu;
-	}
-
-	uint32_t tex_h = tex->height;
-	GSPGPU_FlushDataCache(stage, tex_w * tex_h * 4);
-	GX_DisplayTransfer((u32*)stage, GX_BUFFER_DIM(tex_w, tex_h),
-	                   (u32*)tex->data, GX_BUFFER_DIM(tex_w, tex_h),
-	                   GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
-	gspWaitForPPF();
-}
-
 static bool vid_tex_auto_wants_nearest(uint32_t vw, uint32_t vh, bool is_sbs_3d)
 {
 	if(vw == 0 || vh == 0)
@@ -418,28 +258,6 @@ bool Vid_effective_use_linear_texture_filter(uint32_t eye_k)
 	}
 }
 
-static void Vid_update_decoding_statistics(double decoding_time, bool is_key_frame)
-{
-	uint16_t last_index = (DEBUG_GRAPH_ELEMENTS - 1);
-
-	if(vid_player.decoding_min_time > decoding_time)
-		vid_player.decoding_min_time = decoding_time;
-	if(vid_player.decoding_max_time < decoding_time)
-		vid_player.decoding_max_time = decoding_time;
-
-	vid_player.decoding_total_time += decoding_time;
-
-	for(uint16_t i = 1; i < DEBUG_GRAPH_ELEMENTS; i++)
-	{
-		vid_player.keyframe_list[i - 1] = vid_player.keyframe_list[i];
-		vid_player.video_decoding_time_list[i - 1] = vid_player.video_decoding_time_list[i];
-	}
-
-	vid_player.total_frames++;
-	vid_player.keyframe_list[last_index] = is_key_frame;
-	vid_player.video_decoding_time_list[last_index] = decoding_time;
-}
-
 void Vid_update_decoding_statistics_every_100ms(void)
 {
 	u64 current_ts = osGetTime();
@@ -447,72 +265,18 @@ void Vid_update_decoding_statistics_every_100ms(void)
 	//Update performance data every 100ms.
 	if(current_ts >= (vid_player.previous_ts + 100))
 	{
-		uint8_t audio_divisor = DEBUG_GRAPH_AVG_SAMPLES;
-		uint8_t video_divisor = DEBUG_GRAPH_AVG_SAMPLES;
-		/* uint8_t conversion_divisor = DEBUG_GRAPH_AVG_SAMPLES; */
-		uint16_t last_index = (DEBUG_GRAPH_ELEMENTS - 1);
-		double audio_recent_total_time = 0;
-		double video_recent_total_time = 0;
-		/* double conversion_recent_total_time = 0; */
-
 		vid_player.previous_ts = current_ts;
-
-		for(uint16_t i = 1; i < DEBUG_GRAPH_ELEMENTS; i++)
-		{
-			vid_player.packet_buffer_list[i - 1] = vid_player.packet_buffer_list[i];
-			vid_player.raw_audio_buffer_list[i - 1] = vid_player.raw_audio_buffer_list[i];
-			for(uint32_t k = 0; k < EYE_MAX; k++)
-				vid_player.raw_video_buffer_list[k][i - 1] = vid_player.raw_video_buffer_list[k][i];
-		}
-
-		vid_player.packet_buffer_list[last_index] = Util_decoder_get_available_packet_num(DEF_VID_DECORDER_SESSION_ID);
-		vid_player.raw_audio_buffer_list[last_index] = Util_speaker_get_available_buffer_num(DEF_VID_SPEAKER_SESSION_ID);
-		vid_player.raw_video_buffer_list[EYE_LEFT][last_index] = (vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? Util_decoder_mvd_get_available_raw_image_num(DEF_VID_DECORDER_SESSION_ID) : Util_decoder_video_get_available_raw_image_num(0, DEF_VID_DECORDER_SESSION_ID);
-		vid_player.raw_video_buffer_list[EYE_RIGHT][last_index] = Util_decoder_video_get_available_raw_image_num(1, DEF_VID_DECORDER_SESSION_ID);
-
-		vid_player.audio_decoding_avg_time = 0;
-		vid_player.video_decoding_avg_time = 0;
-		/* vid_player.conversion_avg_time = 0; */
-
-		for(uint16_t i = (DEBUG_GRAPH_ELEMENTS - 1); i >= (DEBUG_GRAPH_ELEMENTS - DEBUG_GRAPH_AVG_SAMPLES); i--)
-		{
-			uint16_t current_divisor = (DEBUG_GRAPH_ELEMENTS - (i + 1));
-
-			if(vid_player.audio_decoding_time_list[i] == 0)
-				audio_divisor = current_divisor;
-			else
-				audio_recent_total_time += vid_player.audio_decoding_time_list[i];
-
-			if(vid_player.video_decoding_time_list[i] == 0)
-				video_divisor = current_divisor;
-			else
-				video_recent_total_time += vid_player.video_decoding_time_list[i];
-
-			/* conversion_time_list / conversion_avg 已禁用
-			if(vid_player.conversion_time_list[i] == 0)
-				conversion_divisor = current_divisor;
-			else
-				conversion_recent_total_time += vid_player.conversion_time_list[i];
-			*/
-
-			if(vid_player.audio_decoding_time_list[i] == 0 && vid_player.video_decoding_time_list[i] == 0)
-				break;
-		}
-
-		if(audio_divisor != 0)
-			vid_player.audio_decoding_avg_time = (audio_recent_total_time / audio_divisor);
-		if(video_divisor != 0)
-			vid_player.video_decoding_avg_time = (video_recent_total_time / video_divisor);
-		/* if(conversion_divisor != 0)
-			vid_player.conversion_avg_time = (conversion_recent_total_time / conversion_divisor); */
 
 		//Calc buffering progress.
 		if(vid_player.state == PLAYER_STATE_BUFFERING)
 		{
 			uint16_t available_buffer = 0;
+			uint16_t raw_l = (vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
+				? Util_decoder_mvd_get_available_raw_image_num(DEF_VID_DECORDER_SESSION_ID)
+				: Util_decoder_video_get_available_raw_image_num(0, DEF_VID_DECORDER_SESSION_ID);
+			uint16_t raw_r = Util_decoder_video_get_available_raw_image_num(1, DEF_VID_DECORDER_SESSION_ID);
 
-			for(uint32_t i = 0; i < EYE_MAX; i++)
-				available_buffer = Util_max(available_buffer, vid_player.raw_video_buffer_list[i][last_index]);
+			available_buffer = Util_max(raw_l, raw_r);
 
 			if(available_buffer >= VID_FIXED_RESTART_PLAYBACK_THRESHOLD)
 				vid_player.buffer_progress = 100;//Done.
@@ -523,28 +287,6 @@ void Vid_update_decoding_statistics_every_100ms(void)
 		}
 		else
 			vid_player.buffer_progress = 0;//Not applicable.
-
-		//Calc seeking progress.
-		if(vid_player.state == PLAYER_STATE_SEEKING || vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
-		{
-			if(vid_player.state == PLAYER_STATE_PREPARE_SEEKING || (vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT)
-			|| vid_player.seek_start_pos_after_jump < 0)
-				vid_player.seek_progress = 0;//We can't calculate progress now.
-			else if(vid_player.media_current_pos >= vid_player.seek_pos)
-				vid_player.seek_progress = 100;//Done.
-			else
-			{
-				double seek_amount = (vid_player.seek_pos - vid_player.seek_start_pos_after_jump);
-				double seeked_amount = (vid_player.media_current_pos - vid_player.seek_start_pos_after_jump);
-
-				if(seek_amount == 0)
-					vid_player.seek_progress = 100;//Seek isn't necessary (seek destination is just on keyframe).
-				else
-					vid_player.seek_progress = ((seeked_amount / seek_amount) * 100);
-			}
-		}
-		else
-			vid_player.seek_progress = 0;//Not applicable.
 	}
 }
 
@@ -675,40 +417,22 @@ void frame_worker_thread_start(const void* frame_handle)
 	//No free spaces were found.
 	if(index == UINT8_MAX)
 		return;
-
-	osTickCounterUpdate(&vid_player.decoding_time_tick[index]);
 }
 
 void frame_worker_thread_end(const void* frame_handle)
 {
-	uint8_t index = UINT8_MAX;
-	double time = 0;
-
 	if(!frame_handle)
 		return;
 
 	Util_sync_lock(&vid_player.delay_update_lock, UINT64_MAX);
-	//Search for stopwatch index using frame handle.
 	for(uint8_t i = 0; i < DEBUG_GRAPH_TEMP_ELEMENTS; i++)
 	{
 		if(vid_player.frame_list[i] == frame_handle)
 		{
-			index = i;
-			//Unregister it.
 			vid_player.frame_list[i] = NULL;
 			break;
 		}
 	}
-	Util_sync_unlock(&vid_player.delay_update_lock);
-
-	//Not registerd.
-	if(index == UINT8_MAX)
-		return;
-
-	osTickCounterUpdate(&vid_player.decoding_time_tick[index]);
-	time = osTickCounterRead(&vid_player.decoding_time_tick[index]);
-	Util_sync_lock(&vid_player.delay_update_lock, UINT64_MAX);
-	Vid_update_decoding_statistics(time, false);//There's no way to know if this is a keyframe.
 	Util_sync_unlock(&vid_player.delay_update_lock);
 }
 
@@ -750,7 +474,6 @@ void Vid_decode_video_thread(void* arg)
 			{
 				case DECODE_VIDEO_THREAD_DECODE_REQUEST:
 				{
-					bool key_frame = false;
 					uint8_t packet_index = 0;
 					Vid_video_packet_data* packet_info = (Vid_video_packet_data*)message;
 
@@ -758,14 +481,12 @@ void Vid_decode_video_thread(void* arg)
 					if(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING || !packet_info)
 						break;
 
-					key_frame = packet_info->is_key_frame;
 					packet_index = packet_info->packet_index;
 
 					free(packet_info);
 					packet_info = NULL;
 
 					(void)skip;
-					(void)key_frame;
 					{
 						result = Util_decoder_ready_video_packet(packet_index, DEF_VID_DECORDER_SESSION_ID);
 
@@ -802,11 +523,9 @@ void Vid_decode_video_thread(void* arg)
 										{
 											double time = osTickCounterRead(&counter);
 
-											Vid_update_decoding_statistics(time, key_frame);
 											Vid_update_decoding_delay(time, &skip, packet_index);
 										}
 
-										key_frame = false;
 									}
 									else if(result == DEF_ERR_TRY_AGAIN)//Buffer is full.
 									{
@@ -834,7 +553,6 @@ void Vid_decode_video_thread(void* arg)
 								{
 									double time = osTickCounterRead(&counter);
 
-									Vid_update_decoding_statistics(time, key_frame);
 									Vid_update_decoding_delay(time, &skip, packet_index);
 								}
 							}
@@ -936,8 +654,6 @@ void Vid_convert_thread(void* arg)
 	bool should_convert = false;
 	uint8_t packet_index = 0;
 	uint32_t result = DEF_ERR_OTHER;
-	/* TickCounter conversion_time_counter = { 0, };
-	osTickCounterStart(&conversion_time_counter); */
 
 	while (vid_player.thread_run)
 	{
@@ -1066,8 +782,6 @@ void Vid_convert_thread(void* arg)
 				}
 			}
 
-			/* osTickCounterUpdate(&conversion_time_counter); */
-
 			//Update current media position.
 			vid_player.media_current_pos = Vid_get_current_media_pos(vid_player.video_current_pos[EYE_LEFT], vid_player.video_current_pos[EYE_RIGHT], vid_player.audio_current_pos);
 
@@ -1119,8 +833,6 @@ void Vid_convert_thread(void* arg)
 
 					continue;
 				}
-
-				/* osTickCounterUpdate(&conversion_time_counter); */
 
 				if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)//Hardware decoder only supports 1 track at a time.
 					result = Util_decoder_mvd_get_image(&video, &pos, width, height, DEF_VID_DECORDER_SESSION_ID);
@@ -1213,10 +925,8 @@ void Vid_convert_thread(void* arg)
 							uint32_t vis_half = vid_player.video_info[packet_index].width / 2u;
 							C3D_Tex* sbs_l = vid_player.large_image[image_index][EYE_LEFT].images[0].c2d.tex;
 							C3D_Tex* sbs_r = vid_player.large_image[image_index][EYE_RIGHT].images[0].c2d.tex;
-							if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_UNROLL4 && (vis_half % 8u) == 0u)
+							if((vis_half % 8u) == 0u)
 								vid_sbs_morton_opt_at_half(video, width, vis_half, height, sbs_l, sbs_r);
-							else if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_DMA && vid_player.mvd_stage[EYE_LEFT] && vid_player.mvd_stage[EYE_RIGHT])
-								vid_sbs_dma_at_half(video, width, vis_half, height, sbs_l, sbs_r, vid_player.mvd_stage[EYE_LEFT], vid_player.mvd_stage[EYE_RIGHT]);
 							else
 								vid_sbs_morton_at_half(video, width, vis_half, height, sbs_l, sbs_r);
 							C3D_TexFlush(sbs_l);
@@ -1325,12 +1035,7 @@ void Vid_convert_thread(void* arg)
 					{
 						C3D_Tex* sbs_l = vid_player.large_image[image_index][EYE_LEFT].images[0].c2d.tex;
 						C3D_Tex* sbs_r = vid_player.large_image[image_index][EYE_RIGHT].images[0].c2d.tex;
-						if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_UNROLL4)
-							Vid_mvd_sbs_morton_opt(video, width, height, sbs_l, sbs_r);
-						else if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_DMA && vid_player.mvd_stage[EYE_LEFT] && vid_player.mvd_stage[EYE_RIGHT])
-							Vid_mvd_sbs_dma(video, width, height, sbs_l, sbs_r, vid_player.mvd_stage[EYE_LEFT], vid_player.mvd_stage[EYE_RIGHT]);
-						else
-							Vid_mvd_sbs_morton(video, width, height, sbs_l, sbs_r);
+						Vid_mvd_sbs_morton_opt(video, width, height, sbs_l, sbs_r);
 						C3D_TexFlush(sbs_l);
 						C3D_TexFlush(sbs_r);
 						Draw_image_data* li_ll = &vid_player.large_image[image_index][EYE_LEFT].images[0];
@@ -1396,14 +1101,9 @@ void Vid_convert_thread(void* arg)
 				}
 			else if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
 			{
-			//MVD 2D: route to selected upload mode.
+			//MVD 2D: fixed Unroll4-optimized Morton path.
 			Draw_image_data* di_mvd = &vid_player.large_image[image_index][packet_index].images[0];
-			if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_UNROLL4)
-				Vid_mvd_2d_morton_opt(video, width, height, di_mvd->c2d.tex);
-			else if(vid_player.mvd_upload_mode == VID_MVD_UPLOAD_DMA && vid_player.mvd_stage[EYE_LEFT])
-				Vid_mvd_2d_dma(video, width, height, di_mvd->c2d.tex, vid_player.mvd_stage[EYE_LEFT]);
-			else
-				Vid_mvd_2d_morton(video, width, height, di_mvd->c2d.tex);
+			Vid_mvd_2d_morton_opt(video, width, height, di_mvd->c2d.tex);
 			C3D_TexFlush(di_mvd->c2d.tex);
 				di_mvd->subtex->width  = (uint16_t)width;
 				di_mvd->subtex->height = (uint16_t)height;
@@ -1449,6 +1149,10 @@ void Vid_convert_thread(void* arg)
 
 				if(result == DEF_SUCCESS)
 				{
+					vid_player.video_buffer_pts[next_store_index][packet_index] = pos;
+					if(vid_player.is_sbs_3d)
+						vid_player.video_buffer_pts[next_store_index][EYE_RIGHT] = pos;
+
 					//Update buffer index.
 					if((next_store_index + 1) < VIDEO_BUFFERS)
 						next_store_index++;
@@ -1460,7 +1164,6 @@ void Vid_convert_thread(void* arg)
 					if(vid_player.is_sbs_3d)
 						vid_player.next_store_index[EYE_RIGHT] = next_store_index;
 
-					vid_player.total_rendered_frames++;
 				}
 				else
 				{
@@ -1478,17 +1181,6 @@ void Vid_convert_thread(void* arg)
 				free(video);
 				yuv_video = NULL;
 				video = NULL;
-
-				/* conversion_time_list / 无音轨 total_delay 累计已禁用
-				for(uint16_t i = 1; i < DEBUG_GRAPH_ELEMENTS; i++)
-					vid_player.conversion_time_list[i - 1] = vid_player.conversion_time_list[i];
-
-				osTickCounterUpdate(&conversion_time_counter);
-				vid_player.conversion_time_list[(DEBUG_GRAPH_ELEMENTS - 1)] = osTickCounterRead(&conversion_time_counter);
-
-				if(vid_player.num_of_audio_tracks == 0)
-					total_delay += ((vid_player.conversion_time_list[(DEBUG_GRAPH_ELEMENTS - 1)]) - vid_player.video_frametime[packet_index]);
-				*/
 
 				if((packet_index + 1) < vid_player.num_of_video_tracks)
 					packet_index++;

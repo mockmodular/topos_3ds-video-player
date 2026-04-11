@@ -231,25 +231,35 @@ long sysconf(int name)
 {
 	if(name == _SC_NPROCESSORS_CONF || name == _SC_NPROCESSORS_ONLN)
 	{
-		uint8_t model = 0;
-		CFGU_GetSystemModel(&model);
+		if(util_init)
+		{
+			uint8_t n = Util_available_cpu_core_count();
+			if(name == _SC_NPROCESSORS_CONF)
+				return (n == 4) ? 4 : 2;
+			if(name == _SC_NPROCESSORS_ONLN)
+				return n;
+		}
+		/* util_init 前回退 CFG（极少路径） */
+		{
+			uint8_t model = 0;
+			CFGU_GetSystemModel(&model);
 
-		if(name == _SC_NPROCESSORS_CONF)
-		{
-			if(model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL)
-				return 4;
-			else
-				return 2;
+			if(name == _SC_NPROCESSORS_CONF)
+			{
+				if(model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL)
+					return 4;
+				else
+					return 2;
+			}
+			else if(name == _SC_NPROCESSORS_ONLN)
+			{
+				if(model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL)
+					return 2 + Util_is_core_available(2) + Util_is_core_available(3);
+				else
+					return 2;
+			}
 		}
-		else if(name == _SC_NPROCESSORS_ONLN)
-		{
-			if(model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL)
-				return 2 + Util_is_core_available(2) + Util_is_core_available(3);
-			else
-				return 2;
-		}
-		else
-			return -1;
+		return -1;
 	}
 	else
 		return -1;
@@ -499,25 +509,14 @@ uint32_t __wrap_linearSpaceFree(void)
 
 uint32_t Util_init(void)
 {
-	uint8_t model = 0;
-	uint8_t loop = 0;
-
 	if(util_init)
 		goto already_inited;
 
 	for(uint8_t i = 0; i < 4; i++)
 		util_is_core_available[i] = false;
 
-	CFGU_GetSystemModel(&model);
-
-	//NEW3DS have 4 cores, OLD3DS have 2 cores.
-	if(model == CFG_MODEL_N2DSXL || model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL)
-		loop = 4;
-	else
-		loop = 2;
-
-	//Check for core availability.
-	for(uint8_t i = 0; i < loop; i++)
+	/* 始终探测 0..3：老机上线程创建失败则对应核为 false（不依 CFG 决定探测个数）。 */
+	for(uint8_t i = 0; i < 4; i++)
 	{
 		Thread thread = threadCreate(Util_check_core_thread, NULL, DEF_THREAD_STACKSIZE, DEF_THREAD_PRIORITY_NORMAL, i, false);
 
@@ -676,36 +675,6 @@ uint32_t Util_convert_seconds_to_time(double input_seconds, Str_data* time_strin
 	return DEF_ERR_INVALID_ARG;
 
 	api_failed:
-	return result;
-}
-
-uint32_t Util_load_msg(const char* file_name, Str_data* out_msg, uint32_t num_of_msg)
-{
-	uint8_t* fs_buffer = NULL;
-	uint32_t read_size = 0;
-	uint32_t result = DEF_ERR_OTHER;
-
-	if(!file_name || !out_msg || num_of_msg == 0)
-		goto invalid_arg;
-
-	result = Util_file_load_from_rom(file_name, "romfs:/gfx/msg/", &fs_buffer, 0x2000, &read_size);
-	if (result != DEF_SUCCESS)
-		goto api_failed;
-
-	result = Util_parse_file((char*)fs_buffer, num_of_msg, out_msg);
-	if (result != DEF_SUCCESS)
-		goto api_failed;
-
-	free(fs_buffer);
-	fs_buffer = NULL;
-	return DEF_SUCCESS;
-
-	invalid_arg:
-	return DEF_ERR_INVALID_ARG;
-
-	api_failed:
-	free(fs_buffer);
-	fs_buffer = NULL;
 	return result;
 }
 
@@ -950,6 +919,20 @@ bool Util_is_core_available(uint8_t core_id)
 		return false;
 	else
 		return util_is_core_available[core_id];
+}
+
+uint8_t Util_available_cpu_core_count(void)
+{
+	uint8_t n = 0;
+
+	if(!util_init)
+		return 0;
+	for(uint8_t i = 0; i < 4; i++)
+	{
+		if(util_is_core_available[i])
+			n++;
+	}
+	return n;
 }
 
 void Util_sleep(uint64_t us)

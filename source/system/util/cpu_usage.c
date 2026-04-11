@@ -3,13 +3,11 @@
 
 #if DEF_CPU_USAGE_API_ENABLE
 #include <inttypes.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "3ds.h"
 
-#include "system/draw/draw.h"
 #include "system/util/err_types.h"
 #include "system/util/log.h"
 #include "system/util/thread_types.h"
@@ -31,7 +29,6 @@ void Util_cpu_usage_calculate_thread(void* arg);
 
 //Variables.
 static bool util_cpu_usage_init = false;
-static bool util_cpu_usage_show_flag = false;
 static bool util_cpu_usage_reset_counter_request[4] = { 0, };
 static uint8_t util_cpu_usage_core_1_limit = 0;
 static uint8_t util_cpu_usage_core_id[4] = { 0, };
@@ -47,7 +44,6 @@ uint32_t Util_cpu_usage_init(void)
 	if(util_cpu_usage_init)
 		goto already_inited;
 
-	util_cpu_usage_show_flag = false;
 	util_cpu_usage_init = true;
 	for(uint8_t i = 0; i < 4; i++)
 	{
@@ -118,39 +114,6 @@ uint8_t Util_cpu_usage_get_core_1_limit(void)
 		return 0;
 
 	return util_cpu_usage_core_1_limit;
-}
-
-bool Util_cpu_usage_query_show_flag(void)
-{
-	if(!util_cpu_usage_init)
-		return false;
-
-	return util_cpu_usage_show_flag;
-}
-
-void Util_cpu_usage_set_show_flag(bool flag)
-{
-	if(!util_cpu_usage_init)
-		return;
-
-	util_cpu_usage_show_flag = flag;
-}
-
-void Util_cpu_usage_draw(void)
-{
-	uint32_t char_length = 0;
-	char msg_cache[128] = { 0, };
-	Draw_image_data background = Draw_get_empty_image();
-
-	//%f expects double.
-	char_length = snprintf(msg_cache, 128, "CPU : %.1f%%", (double)Util_cpu_usage_get_cpu_usage(-1));
-	for(uint8_t i = 0; i < 4; i++)//%f expects double.
-		char_length += snprintf((msg_cache + char_length), 128 - char_length, "\nCore #%" PRIu8 " : %.1f%%", i, (double)Util_cpu_usage_get_cpu_usage(i));
-
-	snprintf((msg_cache + char_length), 128 - char_length, "\n(#1 max : %" PRIu8 "%%)", Util_cpu_usage_get_core_1_limit());
-
-	Draw_with_background_c(msg_cache, 220, 90, 0.4, 0.4, DEF_DRAW_YELLOW, DRAW_X_ALIGN_RIGHT, DRAW_Y_ALIGN_CENTER,
-	100, 60, DRAW_BACKGROUND_UNDER_TEXT, &background, 0x80FFFFFF);
 }
 
 Result __wrap_APT_SetAppCpuTimeLimit(uint32_t percent)

@@ -3,6 +3,9 @@
 #include <citro2d.h>
 
 #define VP_FONT_SCALE       0.45f
+/* 顶栏路径 + Player 标题与 chrome 按钮标签共用（p_draw_text_bar 只用此宏，便于与列表等区分） */
+#define VP_CHROME_TOP_TEXT_SCALE    VP_FONT_SCALE
+
 #define VP_TEXT_BUF_CHARS   4096
 
 /* ── 底色 ── */

@@ -157,6 +157,11 @@ void Vid_hid_enqueue(const Hid_info *key, const VidHidLayout *layout, const VidH
 		{
 			(void)vid_push(VID_CMD_PANEL_GO_SETTING);
 		}
+		/* Y：设置面板 — Lawvere 信息层（Player/文件 界面不按 Y 切换面板） */
+		else if(rs->panel == VID_PANEL_SETTING && VID_HID_PANEL_QUICK_MENU_CFM(*k))
+		{
+			(void)vid_push(VID_CMD_PANEL_TOGGLE_QUICK_MENU);
+		}
 		/* 设置面板 A：仅进入子菜单行；开关/选项/滑块须用左右键改值 */
 		else if(rs->panel == VID_PANEL_SETTING && (DEF_HID_PR_EM(k->a, 1) || DEF_HID_HD(k->a)))
 		{
@@ -244,8 +249,6 @@ void Vid_hid_enqueue(const Hid_info *key, const VidHidLayout *layout, const VidH
 				(void)vid_push(VID_CMD_PANEL_GO_FILES);
 			else if(VID_HID_PANEL_GO_SETTING_CFM(*k))
 				(void)vid_push(VID_CMD_PANEL_GO_SETTING);
-			else if(VID_HID_PANEL_QUICK_MENU_CFM(*k))
-				(void)vid_push(VID_CMD_PANEL_TOGGLE_QUICK_MENU);
 		}
 	}
 }

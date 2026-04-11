@@ -17,7 +17,6 @@
 #define DEF_ERR_TRY_AGAIN							(uint32_t)(0xFFFFFFF7)	//Try again later.
 #define DEF_ERR_ALREADY_INITIALIZED					(uint32_t)(0xFFFFFFF6)	//Already initialized.
 #define DEF_ERR_NOT_INITIALIZED						(uint32_t)(0xFFFFFFF5)	//Not initialized.
-#define DEF_ERR_CURL_RETURNED_NOT_SUCCESS			(uint32_t)(0xFFFFFFF4)	//CURL API returned non-success result.
 #define DEF_ERR_NEED_MORE_INPUT						(uint32_t)(0xFFFFFFF3)	//Need more data to produce an output.
 //This is different from DEF_ERR_DECODER_TRY_AGAIN, No video output was made at this call, try again without calling Util_decoder_ready_video_packet().
 #define DEF_ERR_DECODER_TRY_AGAIN_NO_OUTPUT			(uint32_t)(0xFFFFFFF2)
@@ -39,7 +38,6 @@
 #define DEF_ERR_ALREADY_INITIALIZED_STR				(const char*)"Already initialized."
 #define DEF_ERR_NOT_INITIALIZED_STR					(const char*)"Not initialized."
 #define DEF_ERR_NINTENDO_RETURNED_NOT_SUCCESS_STR	(const char*)"Nintendo API returned NOT success."
-#define DEF_ERR_CURL_RETURNED_NOT_SUCCESS_STR		(const char*)"Curl returned NOT success."
 #define DEF_ERR_NEED_MORE_INPUT_STR					(const char*)"Need more input to produce the output."
 #define DEF_ERR_DECODER_TRY_AGAIN_NO_OUTPUT_STR		(const char*)"Try again (video output was made)."
 #define DEF_ERR_DECODER_TRY_AGAIN_STR				(const char*)"Try again."

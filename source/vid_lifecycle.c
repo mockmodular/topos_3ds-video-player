@@ -21,10 +21,9 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include <malloc.h>
 #include <libavutil/cpu.h>
 
-#include "system/menu.h"
+#include "system/draw/draw.h"
 #include "system/sem.h"
 #include "system/util/converter.h"
-#include "system/util/cpu_usage.h"
 #include "system/util/err.h"
 #include "system/util/file.h"
 #include "system/util/hid.h"
@@ -32,11 +31,11 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "system/util/log.h"
 #include "system/util/speaker.h"
 #include "system/util/watch.h"
+#include "system/util/sync.h"
 
 
 //Prototypes.
 static void Vid_init_variable(void);
-static void Vid_init_debug_view_mode(void);
 static void Vid_init_player_data(void);
 static void Vid_init_ui_data(void);
 //Removed static from thread to make symbol accessble from other files (for debug).
@@ -44,7 +43,6 @@ void Vid_init_thread(void* arg);
 void Vid_exit_thread(void* arg);
 
 //Variables.
-Str_data vid_msg[MSG_MAX] = { 0, };
 Vid_player vid_player = { 0, };
 //Code.
 bool Vid_query_init_flag(void)
@@ -77,18 +75,6 @@ void Vid_set_use_hw_decoding(bool value)
 	vid_player.use_hw_decoding = value;
 }
 
-uint8_t Vid_get_mvd_upload_mode(void)
-{
-	return vid_player.mvd_upload_mode;
-}
-
-void Vid_set_mvd_upload_mode(uint8_t value)
-{
-	(void)value;
-	vid_player.mvd_upload_mode = VID_MVD_UPLOAD_UNROLL4;
-}
-
-
 void Vid_resume(void)
 {
 	vid_player.thread_suspend = false;
@@ -96,7 +82,6 @@ void Vid_resume(void)
 	//Reset key state on scene change.
 	Util_hid_reset_key_state(HID_KEY_BIT_ALL);
 	Draw_set_refresh_needed(true);
-	Menu_suspend();
 
 	for(uint32_t i = 0; i < EYE_MAX; i++)
 		vid_player.next_frame_update_time[i] = (osGetTime() + vid_player.video_frametime[i]);
@@ -107,11 +92,6 @@ void Vid_suspend(void)
 	/* Legacy: used to return to main menu / exit; UI entry points removed. */
 	vid_player.thread_suspend = true;
 	vid_player.main_run = false;
-}
-
-uint32_t Vid_load_msg(void)
-{
-	return Util_load_msg("vid.txt", vid_msg, MSG_MAX);
 }
 
 void Vid_init(bool draw)
@@ -185,13 +165,8 @@ void Vid_exit(bool draw)
 
 static void Vid_init_variable(void)
 {
-	uint32_t result = DEF_ERR_OTHER;
-
-	DEF_LOG_RESULT_SMART(result, Vid_load_msg(), (result == DEF_SUCCESS), result);
-
 	Vid_init_settings();
 	Vid_init_hidden_settings();
-	Vid_init_debug_view_mode();
 	Vid_init_debug_view_data();
 	Vid_init_desync_data();
 	Vid_init_player_data();
@@ -202,46 +177,12 @@ static void Vid_init_variable(void)
 }
 
 
-static void Vid_init_debug_view_mode(void)
-{
-	vid_player.show_decoding_graph = true;
-	/* show_color_conversion_graph 已禁用
-	vid_player.show_color_conversion_graph = true;
-	*/
-	vid_player.show_packet_buffer_graph = true;
-	vid_player.show_raw_video_buffer_graph = true;
-	vid_player.show_raw_audio_buffer_graph = true;
-}
-
 void Vid_init_debug_view_data(void)
 {
-	vid_player.total_frames = 0;
-	vid_player.total_rendered_frames = 0;
 	vid_player.previous_ts = 0;
-	vid_player.decoding_min_time = 0xFFFFFFFF;
-	vid_player.decoding_max_time = 0;
-	vid_player.decoding_total_time = 0;
-	vid_player.audio_decoding_avg_time = 0;
-	vid_player.video_decoding_avg_time = 0;
-	/* vid_player.conversion_avg_time = 0; */
-
-	for(uint16_t i = 0 ; i < DEBUG_GRAPH_ELEMENTS; i++)
-	{
-		vid_player.keyframe_list[i] = 0;
-		vid_player.packet_buffer_list[i] = 0;
-		vid_player.raw_audio_buffer_list[i] = 0;
-		vid_player.video_decoding_time_list[i] = 0;
-		vid_player.audio_decoding_time_list[i] = 0;
-		/* vid_player.conversion_time_list[i] = 0; */
-		for(uint32_t k = 0; k < EYE_MAX; k++)
-			vid_player.raw_video_buffer_list[k][i] = 0;
-	}
 
 	for(uint8_t i = 0; i < DEBUG_GRAPH_TEMP_ELEMENTS; i++)
-	{
-		osTickCounterStart(&vid_player.decoding_time_tick[i]);
 		vid_player.frame_list[i] = NULL;
-	}
 }
 
 static void Vid_init_player_data(void)
@@ -259,8 +200,7 @@ void Vid_init_media_data(void)
 	vid_player.media_current_pos = 0;
 	vid_player.seek_pos_cache = 0;
 	vid_player.seek_pos = 0;
-	vid_player.seek_start_pos_after_jump = 0;
-	vid_player.seek_progress = 0;
+	vid_player.seek_start_pos_after_jump = VID_SEEK_JUMP_ANCHOR_UNSET;
 }
 
 void Vid_init_video_data(void)
@@ -270,6 +210,7 @@ void Vid_init_video_data(void)
 	vid_player.num_of_video_tracks = 0;
 	vid_player.next_vfps_update = (current_ts + 1000);
 	vid_player.buffer_progress = 0;
+	vid_player.is_sbs_3d = false;
 
 	for(uint32_t i = 0; i < EYE_MAX; i++)
 	{
@@ -283,6 +224,8 @@ void Vid_init_video_data(void)
 		vid_player.video_y_offset[i] = 15;
 		vid_player.video_zoom[i] = 1;
 		vid_player.video_current_pos[i] = 0;
+		for(uint8_t b = 0; b < VIDEO_BUFFERS; b++)
+			vid_player.video_buffer_pts[b][i] = -1.0;
 		vid_player.video_info[i].width = 0;
 		vid_player.video_info[i].height = 0;
 		vid_player.video_info[i].codec_width = 0;
@@ -370,6 +313,8 @@ void Vid_init_thread(void* arg)
 
 	DEF_LOG_RESULT_SMART(result, Util_sync_create(&vid_player.texture_init_free_lock, SYNC_TYPE_NON_RECURSIVE_MUTEX), (result == DEF_SUCCESS), result);
 	DEF_LOG_RESULT_SMART(result, Util_sync_create(&vid_player.delay_update_lock, SYNC_TYPE_NON_RECURSIVE_MUTEX), (result == DEF_SUCCESS), result);
+	DEF_LOG_RESULT_SMART(result, Util_sync_create(&vid_player.play_request_pending_lock, SYNC_TYPE_NON_RECURSIVE_MUTEX), (result == DEF_SUCCESS), result);
+	DEF_LOG_RESULT_SMART(result, Vid_cmd_init(), (result == DEF_SUCCESS), result);
 
 	vid_player.seek_bar = Draw_get_empty_image();
 
@@ -383,16 +328,9 @@ void Vid_init_thread(void* arg)
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.texture_filter_mode, sizeof(vid_player.texture_filter_mode));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.video_scale_mode, sizeof(vid_player.video_scale_mode));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_full_screen, sizeof(vid_player.is_full_screen));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.remember_video_pos, sizeof(vid_player.remember_video_pos));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_decoding_graph, sizeof(vid_player.show_decoding_graph));
-	/* Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_color_conversion_graph, sizeof(vid_player.show_color_conversion_graph)); */
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_packet_buffer_graph, sizeof(vid_player.show_packet_buffer_graph));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_raw_video_buffer_graph, sizeof(vid_player.show_raw_video_buffer_graph));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_raw_audio_buffer_graph, sizeof(vid_player.show_raw_audio_buffer_graph));
 
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos_cache, sizeof(vid_player.seek_pos_cache));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos, sizeof(vid_player.seek_pos));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_progress, sizeof(vid_player.seek_progress));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.buffer_progress, sizeof(vid_player.buffer_progress));
 
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_bar.selected, sizeof(vid_player.seek_bar.selected));
@@ -466,16 +404,9 @@ void Vid_exit_thread(void* arg)
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.texture_filter_mode);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.video_scale_mode);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_full_screen);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.remember_video_pos);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_decoding_graph);
-	/* show_color_conversion_graph 已禁用：Util_watch_remove(..., &vid_player.show_color_conversion_graph); */
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_packet_buffer_graph);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_raw_video_buffer_graph);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.show_raw_audio_buffer_graph);
 
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos_cache);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_progress);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.buffer_progress);
 
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_bar.selected);
@@ -494,8 +425,19 @@ void Vid_exit_thread(void* arg)
 	Util_queue_delete(&vid_player.convert_thread_command_queue);
 	Util_queue_delete(&vid_player.audio_decode_thread_command_queue);
 
+	Util_sync_lock(&vid_player.play_request_pending_lock, UINT64_MAX);
+	if(vid_player.play_request_pending)
+	{
+		free(vid_player.play_request_pending);
+		vid_player.play_request_pending = NULL;
+	}
+	Util_sync_unlock(&vid_player.play_request_pending_lock);
+	Util_sync_destroy(&vid_player.play_request_pending_lock);
+
 	Util_sync_destroy(&vid_player.texture_init_free_lock);
 	Util_sync_destroy(&vid_player.delay_update_lock);
+
+	Vid_cmd_destroy();
 
 	vid_player.inited = false;
 

@@ -1,6 +1,7 @@
 #include "vid_panel_settings.h"
 #include "vid_panel.h"
 #include "vid_panel_layout.h"
+#include "vid_panel_menu.h"
 #include "vid_state.h"
 #include "video_player.h"
 #include "vid_settings.h"
@@ -14,9 +15,9 @@
 
 /* ── Sub-page row tables ────────────────────────────────────────────────
  * ROOT   : volume, custom, video, advanced, ui mod (UI labels all lowercase; acronyms e.g. SW/HW stay caps)
- * CUSTOM : seek step, remember pos, browse root (movie / SD root), auto dim (5s), eco
+ * CUSTOM : seek step, browse root (movie / SD root), auto dim (5s), eco
  * VIDEO  : 3d or 2d / tex filter / scale / 3d eyes swap
- * ADVANCED: HW decode / HW color / fake model / multi decode / no audio / no video (MVD upload = Unroll4 fixed)
+ * ADVANCED: HW decode(auto) / HW color / fake model / multi decode / no audio / no video (MVD upload = Unroll4 fixed)
  * ────────────────────────────────────────────────────────────────────── */
 
 /* Sem_screen_mode ↔ settings UI chip index (0=3d, 1=2d, 2=auto) */
@@ -83,11 +84,6 @@ static const VpSettingRowDesc s_custom_rows[] = {
         0, {""}, 1, 99
     },
     {
-        VP_SETTING_ROW_CHOICE, VP_SETTING_ID_SW_REMEMBER_POS,
-        "remember pos",
-        2, {"on", "off"}, 0, 0
-    },
-    {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_FS_BROWSER_ROOT,
         "browse root",
         2, {"movie", "SD root"}, 0, 0
@@ -131,12 +127,12 @@ static const VpSettingRowDesc s_advanced_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_ADV_HW_DECODE,
         "hw decode",
-        2, {"SW", "HW"}, 0, 0
+        2, {"SW", "HW(auto)"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_ADV_HW_COLOR,
         "hw color",
-        2, {"CPU", "Y2R*2"}, 0, 0
+        2, {"CPU", "Y2R(auto)"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_FAKE_MODEL,
@@ -230,10 +226,10 @@ static int get_value(VpSettingId id)
             /* Custom UI: 0=on, 1=off */
             return vid_player.auto_dim_5s ? 0 : 1;
         case VP_SETTING_ID_ADV_HW_DECODE:
-            /* 0=SW, 1=HW */
+            /* 0=SW, 1=HW(auto) — 允许尝试 MVD，由解码层决定是否真走硬解 */
             return vid_player.use_hw_decoding ? 1 : 0;
         case VP_SETTING_ID_ADV_HW_COLOR: {
-            /* 0=CPU, 1=Y2R*2 (NEON maps to Y2R for UI) */
+            /* 0=CPU, 1=Y2R(auto)（NEON 等映射到 Y2R UI） */
             if (vid_player.use_hw_color_conversion == VID_HW_CONV_CPU)
                 return 0;
             return 1;
@@ -258,8 +254,6 @@ static int get_value(VpSettingId id)
             return (vid_player.volume > 100) ? 100 : (int)vid_player.volume;
         case VP_SETTING_ID_SW_SEEK_DURATION:
             return (int)vid_player.seek_duration;
-        case VP_SETTING_ID_SW_REMEMBER_POS:
-            return vid_player.remember_video_pos ? 0 : 1;
         case VP_SETTING_ID_FS_BROWSER_ROOT:
             return (vid_player.fs_browser_root_mode == VID_FS_BROWSER_ROOT_MOVIE) ? 0 : 1;
         case VP_SETTING_ID_UI_MOD:
@@ -349,10 +343,6 @@ static void set_value(VpSettingId id, int v)
                 Vid_save_settings();
             break;
         }
-        case VP_SETTING_ID_SW_REMEMBER_POS:
-            vid_player.remember_video_pos = (v == 0);
-            Vid_save_settings();
-            break;
         case VP_SETTING_ID_FS_BROWSER_ROOT: {
             int m = v;
             if (m < 0) m = 0;
@@ -367,6 +357,7 @@ static void set_value(VpSettingId id, int v)
             if (m < 0) m = 0;
             if (m > 1) m = 1;
             vid_player.ui_mod = (m == 1);
+            Vid_panel_player_invalidate_cpu_bar_layout();
             Vid_save_settings();
             break;
         }

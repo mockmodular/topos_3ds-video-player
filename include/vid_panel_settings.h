@@ -25,7 +25,7 @@ typedef enum {
     VP_SETTING_ID_SCREEN_MODE       = 6,
     VP_SETTING_ID_ECO_MODE          = 7,
     VP_SETTING_ID_ADV_HW_COLOR      = 8, /* Advanced only: VID_HW_CONV_* */
-    VP_SETTING_ID_ADV_HW_DECODE     = 9, /* Advanced only: MVD 硬解；不在 Switch 子菜单 */
+    VP_SETTING_ID_ADV_HW_DECODE     = 9, /* Advanced: 允许尝试 MVD（自动回退软解）；不在 Switch 子菜单 */
     VP_SETTING_ID_FAKE_MODEL        = 10,
     VP_SETTING_ID_ENTER_VIDEO       = 20,
     VP_SETTING_ID_ENTER_ADVANCED    = 21,
@@ -33,7 +33,6 @@ typedef enum {
 
     VP_SETTING_ID_SW_VOLUME           = 30,
     VP_SETTING_ID_SW_SEEK_DURATION    = 31,
-    VP_SETTING_ID_SW_REMEMBER_POS     = 32,
     VP_SETTING_ID_SW_TEX_FILTER       = 33,
     VP_SETTING_ID_SW_MULTI_DECODE     = 34, /* 开/关多线程解码；线程数等数值项不在此菜单 */
     VP_SETTING_ID_SW_SBS_SWAP         = 35,

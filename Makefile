@@ -40,9 +40,12 @@ GRAPHICS	:=	gfx
 ROMFS		:=	romfs
 GFXBUILD	:=	$(ROMFS)/gfx
 #---------------------------------------------------------------------------------
-APP_VER				:= 16
+# CIA / NCCH -ver：Nintendo 打包格式 major*1024 + minor*16 + micro（0.11.0 -> 176）
+APP_VER				:= 176
 APP_TITLE			:= topos
-APP_DESCRIPTION		:= topos_video player for 3ds_v0.1
+APP_DESCRIPTION		:= topos_video player for 3ds_v0.11
+# app.rsf SystemControlInfo.RemasterVersion（与语义化 major 一致；勿随意增大以免存档/ExtData 不兼容）
+APP_VERSION_MAJOR	:= 0
 APP_AUTHOR			:= mock
 PRODUCT_CODE		:= CTR-Vid
 UNIQUE_ID			:= 0xEC2B3
@@ -201,20 +204,17 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: all 3dsx cia_all cia_banner cia_icon cia_normal_ram cia_high_ram check_cia_banner clean
+.PHONY: all 3dsx cia_all cia_banner cia_icon cia_normal_ram check_cia_banner clean
 
 #---------------------------------------------------------------------------------
 MAKEROM					?= makerom
-MAKEROM_ARGS			:= -elf "$(OUTPUT).elf" -rsf "$(RSF_PATH)" -banner "$(BUILD)/banner.bnr" -icon "$(BUILD)/icon.icn" -DAPP_TITLE="$(APP_TITLE)" -DAPP_PRODUCT_CODE="$(PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(UNIQUE_ID)"
-MAKEROM_HIGH_RAM_ARGS	:= -elf "$(OUTPUT).elf" -rsf "$(RSF_HIGH_RAM_PATH)" -banner "$(BUILD)/banner.bnr" -icon "$(BUILD)/icon.icn" -DAPP_TITLE="$(APP_TITLE)" -DAPP_PRODUCT_CODE="$(PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(UNIQUE_ID)"
+MAKEROM_ARGS			:= -elf "$(OUTPUT).elf" -rsf "$(RSF_PATH)" -banner "$(BUILD)/banner.bnr" -icon "$(BUILD)/icon.icn" -DAPP_TITLE="$(APP_TITLE)" -DAPP_PRODUCT_CODE="$(PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(UNIQUE_ID)" -DAPP_VERSION_MAJOR="$(APP_VERSION_MAJOR)"
 
 ifneq ($(strip $(LOGO)),)
 	MAKEROM_ARGS			+= -logo "$(LOGO)"
-	MAKEROM_HIGH_RAM_ARGS	+= -logo "$(LOGO)"
 endif
 ifneq ($(strip $(ROMFS)),)
 	MAKEROM_ARGS			+= -DAPP_ROMFS="$(ROMFS)"
-	MAKEROM_HIGH_RAM_ARGS	+= -DAPP_ROMFS="$(ROMFS)"
 endif
 
 BANNERTOOL		?= bannertool
@@ -264,11 +264,6 @@ cia_normal_ram: 3dsx cia_banner cia_icon
 	@$(MAKEROM) -f cia -o $(OUTPUT).cia -target t -exefslogo $(MAKEROM_ARGS) -ver $(APP_VER)
 	@echo
 
-cia_high_ram: 3dsx cia_banner cia_icon
-	@echo Building high ram cia...
-	@$(MAKEROM) -f cia -o $(OUTPUT)_high_ram.cia -target t -exefslogo $(MAKEROM_HIGH_RAM_ARGS) -ver $(APP_VER)
-	@echo
-
 $(BUILD):
 	@mkdir -p $@
 
@@ -285,7 +280,7 @@ endif
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(TARGET).cia $(TARGET)_high_ram.cia
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(TARGET).cia
 
 #---------------------------------------------------------------------------------
 $(GFXBUILD)/%.t3x	$(BUILD)/%.h	:	%.t3s

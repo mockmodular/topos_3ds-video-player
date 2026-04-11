@@ -31,8 +31,53 @@
 
 #define VP_TEXT_PAD 4
 
-/* 顶栏路径 / 文件列表 / Player 标题：文字左缘同列（与列表行 p_draw_text_clipped 的 x 一致） */
-#define VP_CHROME_LEFT_TEXT_X ((VP_TEXT_PAD) + 2)
+/* ── 顶栏 path bar 内「路径」与「Player 标题」共用一套水平范围与竖直基准 ──
+ * 左、右为文字可显示区 [LEFT, RIGHT)（RIGHT 为右缘 x，该列像素不归文字）。
+ * 字体缩放见 vid_panel_theme.h：VP_CHROME_TOP_TEXT_SCALE（与 VP_FONT_SCALE 同一值）。
+ * 行为差异在 vid_panel.c p_draw_text_bar(keep_left)：标题永远保左右裁；路径短则保左、长则右缘对齐本 RIGHT（非屏右）左裁。
+ * 文件名与路径绘制须同传 VP_CHROME_TOP_TEXT_LEFT_X / VP_CHROME_TOP_TEXT_RIGHT_X（见 p_draw_chrome_top、Vid_panel_draw_player_chrome）。
+ * 文件列表行左缘与顶栏左缘对齐 → VP_CHROME_LEFT_TEXT_X 别名指向顶栏左。 */
+#define VP_CHROME_TOP_TEXT_LEFT_X   ((VP_TEXT_PAD) + 2)
+#define VP_CHROME_TOP_TEXT_RIGHT_X  246 /* 手写像素；路径与标题仅此一处定义右界 */
+
+#define VP_CHROME_LEFT_TEXT_X       (VP_CHROME_TOP_TEXT_LEFT_X)
+
+/* ── Player 底屏 ui_mod 信息区（vid_panel_menu.c）──────────────────────────
+ * 经 `Draw_*` 的字号：`DEF_DRAW_TEXT_SCALE`（见 draw_types.h）。
+ * 与顶栏 VP_CHROME_TOP_TEXT_LEFT_X 默认同为 6，但是两个独立宏，禁止互相 #define 引用。
+ *
+ * VP_PLAYER_UI_STATUS_LEFT_X — 仅此一个调节「整块信息区最左一列文案」的屏幕 x；改这里平移 V/A/分辨率/Decode/Lin/CPU 标题与 C0 标签等。
+ *
+ * 下面为相对屏幕左缘 (x=0) 的钉死列，不参与「最左微调」：中间/右侧固定位置。 */
+#define VP_PLAYER_UI_STATUS_LEFT_X        6
+#define VP_PLAYER_UI_STATUS_BAR_X         22
+#define VP_PLAYER_UI_STATUS_PCT_X         290
+/* 叠在 video_x_offset_bottom（解码层给的底屏坐标）上再向右加的像素；与左列、顶栏无公式关系 */
+#define VP_PLAYER_UI_STATUS_THUMB_SHIFT_X 4
+
+/* Player 状态区：path 条带下首行 y + 统一行距（小字号 0.30 下更易扫读）。 */
+#define VP_PLAYER_STATUS_FIRST_Y        27
+#define VP_PLAYER_STATUS_LINE_STEP      11
+#define VP_PLAYER_STATUS_BAR_GAP_PRE    2 /* CPU 标题与第一条形图之间的空隙 */
+
+#define VP_PLAYER_STATUS_ROW_V_Y        (VP_PLAYER_STATUS_FIRST_Y + 0 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_A_Y        (VP_PLAYER_STATUS_FIRST_Y + 1 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_RES_Y      (VP_PLAYER_STATUS_FIRST_Y + 2 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_DEC_Y      (VP_PLAYER_STATUS_FIRST_Y + 3 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_DEC2_Y     (VP_PLAYER_STATUS_FIRST_Y + 4 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_DIAG_LIN_Y (VP_PLAYER_STATUS_FIRST_Y + 5 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_CPUHDR_Y   (VP_PLAYER_STATUS_FIRST_Y + 6 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_BAR0_Y         (VP_PLAYER_STATUS_FIRST_Y + 7 * VP_PLAYER_STATUS_LINE_STEP + (VP_PLAYER_STATUS_BAR_GAP_PRE))
+#define VP_PLAYER_STATUS_BAR_STRIDE     12
+
+/* 分辨率行：WxH 与 fpsNhz 分两列绘制（fps 的 x 固定，不随分辨率位数变化）；SBS/3D 靠右固定列。 */
+#define VP_PLAYER_UI_STATUS_RES_X       ((float)VP_PLAYER_UI_STATUS_LEFT_X)
+#define VP_PLAYER_UI_STATUS_FPS_X       (78.0f) /* 固定列：避免与常见 WxH 重叠，间距接近旧版 " @" */
+#define VP_PLAYER_UI_RES_SBS_X          214.0f
+
+/* Lin / Heap：分列；Heap 起 x 须大于「Lin:」+ 合理最大数字宽度。 */
+#define VP_PLAYER_UI_DIAG_LIN_X         ((float)VP_PLAYER_UI_STATUS_LEFT_X)
+#define VP_PLAYER_UI_DIAG_HEAP_X        172.0f
 
 #define VP_SCROLL_THRESH 4
 
@@ -70,13 +115,20 @@
 #define VP_TOP_BTN_Y ((VP_PATH_BAR_H - VP_CHROME_BTN_H) / 2)
 #define VP_TOP_BTN_H VP_CHROME_BTN_H
 
-/* path bar 文字右边界 */
-#define VP_PATH_TEXT_MAX_X (VP_SW_BTN_X - VP_TEXT_PAD)
+/* 兼容旧名：均等于顶栏文字右界 VP_CHROME_TOP_TEXT_RIGHT_X */
+#define VP_PLAYER_TITLE_TEXT_MAX_X  (VP_CHROME_TOP_TEXT_RIGHT_X)
+#define VP_PATH_TEXT_MAX_X          (VP_CHROME_TOP_TEXT_RIGHT_X)
 
-/* Player 底屏：folder 按钮下方、主内容区右上角 FPS（与 Sem state.msg 同源 Draw_query_fps） */
-#define VP_PLAYER_FPS_Y (VP_PATH_BAR_H + 2)
+/* 顶栏路径/标题行：与右上按钮同高的条带内竖直居中 +1（Citro2D 顶对齐 y） */
+static inline float vp_chrome_top_text_ty(float text_h)
+{
+	float btn_y = (float)VP_TOP_BTN_Y;
+	float btn_h = (float)VP_CHROME_BTN_H;
+	return btn_y + (btn_h - text_h) * 0.5f + 1.0f;
+}
+
+/* Player 底屏 FPS（vid_panel.c）：与 V 编解码首行同 y（VP_PLAYER_STATUS_ROW_V_Y）；字号用 DEF_DRAW_TEXT_C2D_SCALE。 */
 #define VP_PLAYER_FPS_DX (-4) /* 相对右对齐基线再左移 */
-#define VP_PLAYER_FPS_DY (4)  /* 相对 VP_PLAYER_FPS_Y 再下移 */
 
 /* 进度条（仅在 Player 面板额外绘制时使用） */
 #define VP_PROGRESS_INVALID 10   /* 两端死区宽度（各10px，不到达屏幕边缘） */
@@ -85,6 +137,11 @@
 #define VP_PROGRESS_GROUP_UP_PX 8
 #define VP_PROGRESS_Y       (VP_SCREEN_H - VP_FOOTER_H - 10 - VP_PROGRESS_GROUP_UP_PX)
 #define VP_PROGRESS_SLOP    12   /* vertical hit-test slop above/below bar */
+
+/* 进度条上方时间 / Seek 文案：`Draw` 字号 DEF_DRAW_TEXT_SCALE(0.30)；y 在条带上方固定间距。 */
+#define VP_TIMEBAR_TEXT_ABOVE_PROGRESS  15.0f
+#define VP_TIMEBAR_TIME_X               ((float)VP_PLAYER_UI_STATUS_LEFT_X)
+#define VP_TIMEBAR_SEEK_X               (210.0f) /* 原 170 + 右移 40 */
 
 /* Active region within the bar */
 #define VP_PROGRESS_X_MIN   (VP_PROGRESS_INVALID)
@@ -116,9 +173,24 @@ static inline int vp_progress_seek_x(int px)
     return px;
 }
 
-/* 快速菜单覆盖层（中央浮动弹窗） */
-#define VP_OVERLAY_PANEL_H 108
-#define VP_OVERLAY_MARGIN  20
+/* 快速菜单覆盖层（中央浮动弹窗）
+ * 几何分两层，避免“描边外框”和“深色内芯”混用导致视觉中心与计算中心不一致：
+ *   FRAME — 1px 描边矩形（左右各距屏幕 VP_OVERLAY_MARGIN）
+ *   INNER — 内缩 BORDER_PX 后的实心区；文案与控件的 X 向一律相对 INNER 居中。
+ */
+#define VP_OVERLAY_PANEL_H    108
+#define VP_OVERLAY_MARGIN     20
+#define VP_OVERLAY_BORDER_PX  1
+
+#define VP_OVERLAY_FRAME_X    (VP_OVERLAY_MARGIN)
+#define VP_OVERLAY_FRAME_W    (VP_SCREEN_W - 2 * (VP_OVERLAY_MARGIN))
+
+#define VP_OVERLAY_INNER_X    ((VP_OVERLAY_FRAME_X) + (VP_OVERLAY_BORDER_PX))
+#define VP_OVERLAY_INNER_W    ((VP_OVERLAY_FRAME_W) - 2 * (VP_OVERLAY_BORDER_PX))
+
+/** 内芯水平几何中心（浮点）。与 C2D_DrawText(..., C2D_AlignCenter, x, ...) 的 x 一致。 */
+#define VP_OVERLAY_CONTENT_CENTER_XF \
+	((float)(VP_OVERLAY_INNER_X) + (float)(VP_OVERLAY_INNER_W) * 0.5f)
 
 /* ── Settings 面板 ───────────────────────────────────────────────────────
  * 内容区：顶部条带分隔线下方 ↔ 底部条带分隔线上方。

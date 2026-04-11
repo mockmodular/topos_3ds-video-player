@@ -12,6 +12,12 @@ void Vid_init_desync_data(void)
 		for(uint16_t k = 0; k < DELAY_SAMPLES; k++)
 			vid_player.video_delay_ms[i][k] = 0;
 	}
+
+	for(uint8_t b = 0; b < VIDEO_BUFFERS; b++)
+	{
+		for(uint32_t e = 0; e < EYE_MAX; e++)
+			vid_player.video_buffer_pts[b][e] = -1.0;
+	}
 }
 
 void Vid_update_video_delay(Vid_eye eye_index)
@@ -37,7 +43,21 @@ void Vid_update_video_delay(Vid_eye eye_index)
 	for(uint8_t i = 0; i < array_size - 1; i++)
 		vid_player.video_delay_ms[eye_index][i] = vid_player.video_delay_ms[eye_index][i + 1];
 
-	vid_player.video_delay_ms[eye_index][array_size - 1] = (vid_player.audio_current_pos - (vid_player.video_current_pos[eye_index] - buffered_video_ms));
+	/* Prefer PTS of the frame actually shown (slot before next_draw); avoids mixing
+	 * "next-to-display" head with a buffered_ms correction. */
+	{
+		uint8_t nd    = (uint8_t)vid_player.next_draw_index[eye_index];
+		uint8_t shown = (nd > 0) ? (uint8_t)(nd - 1) : (uint8_t)(VIDEO_BUFFERS - 1);
+		double vpts   = vid_player.video_buffer_pts[shown][eye_index];
+
+		if(vpts >= 0.0)
+			vid_player.video_delay_ms[eye_index][array_size - 1] =
+			    (vid_player.audio_current_pos - vpts);
+		else
+			vid_player.video_delay_ms[eye_index][array_size - 1] =
+			    (vid_player.audio_current_pos
+			     - (vid_player.video_current_pos[eye_index] - buffered_video_ms));
+	}
 
 	for(uint8_t i = 0; i < array_size; i++)
 		total_delay += vid_player.video_delay_ms[eye_index][i];

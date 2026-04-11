@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define VID_CMD_QUEUE_CAP		(uint32_t)(64)
+#define VID_CMD_QUEUE_CAP		(uint32_t)(128)
 
 typedef enum
 {
@@ -37,7 +37,8 @@ typedef enum
 	VID_CMD_PANEL_LIST_PRESS,         /* uarg = packed (py<<16|px) */
 	VID_CMD_PANEL_LIST_SCROLL,        /* uarg = packed (py<<16|px) */
 	VID_CMD_PANEL_LIST_RELEASE,       /* uarg = packed (py<<16|px) */
-	VID_CMD_PANEL_TOGGLE_QUICK_MENU,  /* Y key quick-menu overlay */
+	VID_CMD_PANEL_TOGGLE_QUICK_MENU,  /* Lawvere 信息层（仅设置面板；Y / info 键） */
+	VID_CMD_PANEL_TOGGLE_PLAYER_FILES, /* Player/文件 互切（右下 / Y） */
 	VID_CMD_PANEL_NAV_UP,             /* iarg = step (1 or accel) */
 	VID_CMD_PANEL_NAV_DOWN,           /* iarg = step (1 or accel) */
 	VID_CMD_PANEL_NAV_PAGE_UP,        /* jump up   11 rows */
@@ -61,9 +62,13 @@ typedef struct
 	double darg1;
 } VidCmd;
 
+uint32_t Vid_cmd_init(void);
+void Vid_cmd_destroy(void);
+
 void Vid_cmd_queue_reset(void);
 bool Vid_cmd_push(VidCmd cmd);
 bool Vid_cmd_pop(VidCmd *out);
 uint32_t Vid_cmd_count(void);
+uint32_t Vid_cmd_dropped_total(void);
 
 #endif

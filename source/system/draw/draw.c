@@ -2,13 +2,13 @@
 #include "system/draw/draw.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include "system/draw/exfont.h"
 #include "system/util/converter_types.h"
-#include "system/util/cpu_usage.h"
 #include "system/util/err_types.h"
 #include "system/util/hid.h"
 #include "system/util/log.h"
@@ -70,6 +70,89 @@ static Draw_image_data util_draw_battery_charge_icon_image[1] = { 0, };
 static Draw_image_data util_draw_eco_image[2] = { 0, };
 static Draw_image_data util_draw_bot_ui = { 0, };
 static Draw_image_data util_draw_empty_image = { 0, };
+static C2D_TextBuf util_draw_text_buf = NULL;
+
+static uint32_t draw_abgr_to_c2d_color(uint32_t abgr8888)
+{
+	uint8_t a = (uint8_t)(abgr8888 >> 24);
+	uint8_t b = (uint8_t)(abgr8888 >> 16);
+	uint8_t g = (uint8_t)(abgr8888 >> 8);
+	uint8_t r = (uint8_t)abgr8888;
+	return C2D_Color32(r, g, b, a);
+}
+
+/* 将一行 UTF-8（无 \\n）解析到 util_draw_text_buf 并测量；失败则宽高为 0。 */
+static void draw_measure_line(const char* line_start, size_t line_len, float sx, float sy, float* out_w, float* out_h)
+{
+	C2D_Text t = { 0, };
+
+	if(!util_draw_text_buf || !line_start || !out_w || !out_h)
+	{
+		if(out_w)
+			*out_w = 0;
+		if(out_h)
+			*out_h = 0;
+		return;
+	}
+
+	*out_w = 0;
+	*out_h = 0;
+
+	if(line_len == 0)
+		return;
+
+	{
+		char* copy = malloc(line_len + 1);
+		if(!copy)
+			return;
+		memcpy(copy, line_start, line_len);
+		copy[line_len] = '\0';
+
+		C2D_TextBufClear(util_draw_text_buf);
+		if(C2D_TextParse(&t, util_draw_text_buf, copy) == NULL)
+		{
+			free(copy);
+			return;
+		}
+		free(copy);
+	}
+
+	C2D_TextOptimize(&t);
+	C2D_TextGetDimensions(&t, sx, sy, out_w, out_h);
+}
+
+static void draw_line_c2d(const char* line_start, size_t line_len, float x, float y, float z, float sx, float sy, uint32_t abgr8888)
+{
+	C2D_Text t = { 0, };
+	char* copy;
+
+	if(!util_draw_text_buf || !line_start)
+		return;
+
+	if(line_len == 0)
+		return;
+
+	copy = malloc(line_len + 1);
+	if(!copy)
+		return;
+	memcpy(copy, line_start, line_len);
+	copy[line_len] = '\0';
+
+	C2D_TextBufClear(util_draw_text_buf);
+	if(C2D_TextParse(&t, util_draw_text_buf, copy) == NULL)
+	{
+		free(copy);
+		return;
+	}
+	free(copy);
+
+	C2D_TextOptimize(&t);
+
+	if(abgr8888 == DEF_DRAW_NO_COLOR)
+		C2D_DrawText(&t, C2D_AlignLeft, x, y, z, sx, sy);
+	else
+		C2D_DrawText(&t, C2D_AlignLeft | C2D_WithColor, x, y, z, sx, sy, draw_abgr_to_c2d_color(abgr8888));
+}
 
 //Code.
 uint32_t Draw_init(bool _3d)
@@ -106,6 +189,15 @@ uint32_t Draw_init(bool _3d)
 	}
 
 	C2D_Prepare();
+
+	util_draw_text_buf = C2D_TextBufNew(8192);
+	if(!util_draw_text_buf)
+	{
+		result = DEF_ERR_OTHER;
+		DEF_LOG_RESULT(C2D_TextBufNew, false, result);
+		goto error_other;
+	}
+
 	util_draw_screen[DRAW_SCREEN_TOP_LEFT] = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 	util_draw_screen[DRAW_SCREEN_BOTTOM] = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 	util_draw_screen[DRAW_SCREEN_TOP_RIGHT] = C2D_CreateScreenTarget(GFX_TOP, GFX_RIGHT);
@@ -181,6 +273,11 @@ uint32_t Draw_init(bool _3d)
 	return DEF_ERR_ALREADY_INITIALIZED;
 
 	error_other:
+	if(util_draw_text_buf)
+	{
+		C2D_TextBufDelete(util_draw_text_buf);
+		util_draw_text_buf = NULL;
+	}
 	C2D_Fini();
 	C3D_Fini();
 	Util_sync_destroy(&util_draw_need_refresh_mutex);
@@ -196,6 +293,11 @@ uint32_t Draw_reinit(bool _3d)
 	//Not sure why.
 	gspWaitForVBlank();
 	gspWaitForVBlank();
+	if(util_draw_text_buf)
+	{
+		C2D_TextBufDelete(util_draw_text_buf);
+		util_draw_text_buf = NULL;
+	}
 	C2D_Fini();
 	C3D_Fini();
 
@@ -215,6 +317,13 @@ uint32_t Draw_reinit(bool _3d)
 	}
 
 	C2D_Prepare();
+	util_draw_text_buf = C2D_TextBufNew(8192);
+	if(!util_draw_text_buf)
+	{
+		DEF_LOG_RESULT(C2D_TextBufNew, false, DEF_ERR_OTHER);
+		goto error_other;
+	}
+
 	util_draw_screen[DRAW_SCREEN_TOP_LEFT] = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 	util_draw_screen[DRAW_SCREEN_BOTTOM] = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 	util_draw_screen[DRAW_SCREEN_TOP_RIGHT] = C2D_CreateScreenTarget(GFX_TOP, GFX_RIGHT);
@@ -233,6 +342,11 @@ uint32_t Draw_reinit(bool _3d)
 
 	error_other:
 	util_draw_init = false;
+	if(util_draw_text_buf)
+	{
+		C2D_TextBufDelete(util_draw_text_buf);
+		util_draw_text_buf = NULL;
+	}
 	C2D_Fini();
 	C3D_Fini();
 	Util_sync_destroy(&util_draw_need_refresh_mutex);
@@ -247,6 +361,12 @@ void Draw_exit(void)
 	util_draw_init = false;
 	for (uint32_t i = 0; i < 128; i++)
 		Draw_free_texture(i);
+
+	if(util_draw_text_buf)
+	{
+		C2D_TextBufDelete(util_draw_text_buf);
+		util_draw_text_buf = NULL;
+	}
 
 	//Without calling gspWaitForVBlank() twice before calling C3D_Fini(), it may hang in C3D_Fini().
 	//Not sure why.
@@ -598,77 +718,43 @@ Draw_image_data Draw_get_empty_image(void)
 
 void Draw_get_text_size(const char* text, float text_size_x, float text_size_y, double* out_text_size_x, double* out_text_size_y)
 {
-	bool new_line = false;
-	bool eof = false;
-	uint32_t start_pos = UINT32_MAX;
-	uint32_t array_count = 0;
-	uint32_t length = 0;
-	float width = 0, height = 0, y_offset = 0, used_x = 0, used_x_max = 0, used_y_max = 0;
-	Exfont_one_char* part_text = NULL;
+	float sx, sy;
+	float used_x_max = 0;
+	float total_y = 0;
 
-	if(!util_draw_init)
+	if(!util_draw_init || !text || !out_text_size_x || !out_text_size_y)
 		return;
 
-	if(!text)
-		return;
-
-	length = strlen(text);
-	if(length == 0)
-		return;
-
-	length++;
-	part_text = (Exfont_one_char*)malloc(sizeof(Exfont_one_char) * length);
-	if(!part_text)
-		return;
-
-	text_size_x *= 1.2f;
-	text_size_y *= 1.2f;
-
-	Exfont_text_parse(text, part_text, (length - 1), &array_count);
-	array_count++;
-
-	for (uint32_t i = 0; i < (array_count + 1); i++)
+	if(text[0] == '\0')
 	{
-		if (part_text[i].buffer[0] == 0x0)
-			eof = true;
-		else if (part_text[i].buffer[0] == 0xA)
-			new_line = true;
+		*out_text_size_x = 0;
+		*out_text_size_y = 0;
+		return;
+	}
 
-		if(start_pos == UINT32_MAX)
-			start_pos = i;
+	sx = text_size_x * 1.2f;
+	sy = text_size_y * 1.2f;
 
-		if(new_line || eof || i == (array_count - 1))
+	for(const char* p = text;;)
+	{
+		const char* nl = strchr(p, '\n');
+		size_t len = nl ? (size_t)(nl - p) : strlen(p);
+		float w, h;
+
+		draw_measure_line(p, len, sx, sy, &w, &h);
 		{
-			Exfont_draw_get_text_size(&part_text[start_pos], (i - start_pos), text_size_x, text_size_y, &width, &height);
-
-			start_pos = UINT32_MAX;
-			used_x += width;
-			if(used_x > used_x_max)
-				used_x_max = used_x;
-			if(height > used_y_max)
-				used_y_max = height;
+			float lh = fmaxf(h, 25.0f * sy);
+			if(w > used_x_max)
+				used_x_max = w;
+			total_y += lh;
 		}
-
-		if(eof)
+		if(!nl)
 			break;
-
-		if(new_line)
-		{
-			height = 25 * text_size_y;
-			if(height > used_y_max)
-				used_y_max = height;
-
-			y_offset += used_y_max;
-			used_y_max = 0;
-			used_x = 0;
-			new_line = false;
-		}
+		p = nl + 1;
 	}
 
 	*out_text_size_x = used_x_max;
-	*out_text_size_y = y_offset + used_y_max;
-	free(part_text);
-	part_text = NULL;
+	*out_text_size_y = total_y;
 }
 
 void Draw_c(const char* text, float x, float y, float text_size_x, float text_size_y, uint32_t abgr8888)
@@ -805,10 +891,10 @@ void Draw_top_ui(bool is_eco, bool is_charging, uint8_t wifi_signal, uint8_t bat
 		Draw_texture(&util_draw_battery_charge_icon_image[0], DEF_DRAW_NO_COLOR, 295.0, 0.0, 20.0, 15.0);
 
 	if(message)
-		Draw_c(message, 0.0, 0.0, 0.45, 0.45, DEF_DRAW_GREEN);
+		Draw_c(message, 0.0, 0.0, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
 
 	Util_str_format(&temp, "%" PRIi8, battery_level);
-	Draw(&temp, 322.5, 1.25, 0.425, 0.425, DEF_DRAW_BLACK);
+	Draw(&temp, 322.5, 1.25, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_BLACK);
 
 	Util_str_free(&temp);
 }
@@ -870,67 +956,67 @@ void Draw_debug_info(bool is_night, uint32_t free_ram, uint32_t free_linear_ram)
 
 	Util_str_format(&temp, "A:%s (%" PRIu16 ", %" PRIu32 "ms) B:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.a.state),
 	key.a.click_count, key.a.held_ms, Short_hid_state_get_name((Short_hid_state)key.b.state), key.b.click_count, key.b.held_ms);
-	Draw_with_background(&temp, 0, 40, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 40, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "X:%s (%" PRIu16 ", %" PRIu32 "ms) Y:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.x.state),
 	key.x.click_count, key.x.held_ms, Short_hid_state_get_name((Short_hid_state)key.y.state), key.y.click_count, key.y.held_ms);
-	Draw_with_background(&temp, 0, 50, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 50, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "L:%s (%" PRIu16 ", %" PRIu32 "ms) R:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.l.state),
 	key.l.click_count, key.l.held_ms, Short_hid_state_get_name((Short_hid_state)key.r.state), key.r.click_count, key.r.held_ms);
-	Draw_with_background(&temp, 0, 60, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 60, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "ZL:%s (%" PRIu16 ", %" PRIu32 "ms) ZR:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.zl.state),
 	key.zl.click_count, key.zl.held_ms, Short_hid_state_get_name((Short_hid_state)key.zr.state), key.zr.click_count, key.zr.held_ms);
-	Draw_with_background(&temp, 0, 70, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 70, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "C↓:%s (%" PRIu16 ", %" PRIu32 "ms) C→:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.c_down.state),
 	key.c_down.click_count, key.c_down.held_ms, Short_hid_state_get_name((Short_hid_state)key.c_right.state), key.c_right.click_count, key.c_right.held_ms);
-	Draw_with_background(&temp, 0, 80, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 80, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "C↑:%s (%" PRIu16 ", %" PRIu32 "ms) C←:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.c_up.state),
 	key.c_up.click_count, key.c_up.held_ms, Short_hid_state_get_name((Short_hid_state)key.c_left.state), key.c_left.click_count, key.c_left.held_ms);
-	Draw_with_background(&temp, 0, 90, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 90, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "D↓:%s (%" PRIu16 ", %" PRIu32 "ms) D→:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.d_down.state),
 	key.d_down.click_count, key.d_down.held_ms, Short_hid_state_get_name((Short_hid_state)key.d_right.state), key.d_right.click_count, key.d_right.held_ms);
-	Draw_with_background(&temp, 0, 100, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 100, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "D↑:%s (%" PRIu16 ", %" PRIu32 "ms) D←:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.d_up.state),
 	key.d_up.click_count, key.d_up.held_ms, Short_hid_state_get_name((Short_hid_state)key.d_left.state), key.d_left.click_count, key.d_left.held_ms);
-	Draw_with_background(&temp, 0, 110, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 110, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "CS↓:%s (%" PRIu16 ", %" PRIu32 "ms) CS→:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.cs_down.state),
 	key.cs_down.click_count, key.cs_down.held_ms, Short_hid_state_get_name((Short_hid_state)key.cs_right.state), key.cs_right.click_count, key.cs_right.held_ms);
-	Draw_with_background(&temp, 0, 120, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 120, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "CS↑:%s (%" PRIu16 ", %" PRIu32 "ms) CS←:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.cs_up.state),
 	key.cs_up.click_count, key.cs_up.held_ms, Short_hid_state_get_name((Short_hid_state)key.cs_left.state), key.cs_left.click_count, key.cs_left.held_ms);
-	Draw_with_background(&temp, 0, 130, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 130, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "START:%s (%" PRIu16 ", %" PRIu32 "ms) SELECT:%s (%" PRIu16 ", %" PRIu32 "ms)", Short_hid_state_get_name((Short_hid_state)key.start.state),
 	key.start.click_count, key.start.held_ms, Short_hid_state_get_name((Short_hid_state)key.select.state), key.select.click_count, key.select.held_ms);
-	Draw_with_background(&temp, 0, 140, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 140, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "TOUCH:%s (%" PRIu16 ", %" PRIu32 "ms) XY:%" PRIi16 ", %" PRIi16, Short_hid_state_get_name((Short_hid_state)key.touch.state),
 	key.touch.click_count, key.touch.held_ms, key.touch_x, key.touch_y);
-	Draw_with_background(&temp, 0, 150, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 150, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	//%f expects double.
 	Util_str_format(&temp, "CPU:%.3fms GPU:%.3fms", (double)C3D_GetProcessingTime(), (double)C3D_GetDrawingTime());
-	Draw_with_background(&temp, 0, 160, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 160, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "Frametime:%.4fms", util_draw_frametime);
-	Draw_with_background(&temp, 0, 170, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 170, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "RAM:%.3fMB", (free_ram / 1000.0 / 1000.0));
-	Draw_with_background(&temp, 0, 180, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 180, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "Linear RAM:%.3fMB", (free_linear_ram / 1000.0 / 1000.0));
-	Draw_with_background(&temp, 0, 190, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 190, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_format(&temp, "Watch:%" PRIu32 "/%" PRIu32 "(%.1f%%)", Util_watch_get_total_usage(), DEF_WATCH_MAX_VARIABLES, ((double)Util_watch_get_total_usage() / DEF_WATCH_MAX_VARIABLES * 100));
-	Draw_with_background(&temp, 0, 200, 0.35, 0.35, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
+	Draw_with_background(&temp, 0, 200, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_CENTER, 300, 10, DRAW_BACKGROUND_UNDER_TEXT, &background, DEF_DRAW_WEAK_BLUE);
 
 	Util_str_free(&temp);
 }
@@ -987,17 +1073,13 @@ static uint32_t Draw_convert_to_pos(uint32_t height, uint32_t width, uint32_t im
 static void Draw_internal(const char* text, float x, float y, float text_size_x, float text_size_y, uint32_t abgr8888, Draw_text_align_x x_align,
 Draw_text_align_y y_align, float box_size_x, float box_size_y, Draw_background texture_position, void* background_image, uint32_t texture_abgr8888)
 {
-	bool new_line = false;
-	bool eof = false;
-	uint32_t start_pos = UINT32_MAX;
-	uint32_t line_count = 0;
-	uint32_t array_count = 0;
-	uint32_t length = 0;
-	float width = 0, height = 0, original_x = 0, original_y = 0;
+	const bool simple_layout = (x_align == DRAW_X_ALIGN_LEFT && y_align == DRAW_Y_ALIGN_TOP && texture_position == DRAW_BACKGROUND_NONE);
+	const float original_x = x;
+	const float original_y = y;
+	float sx, sy;
 	float* x_start = NULL;
-	Exfont_one_char* part_text = NULL;
-	original_x = x;
-	original_y = y;
+	uint32_t line_count_max = 1;
+	const char* scan;
 
 	if(!util_draw_init)
 		return;
@@ -1006,164 +1088,117 @@ Draw_text_align_y y_align, float box_size_x, float box_size_y, Draw_background t
 	|| texture_position <= DRAW_BACKGROUND_INVALID || texture_position >= DRAW_BACKGROUND_MAX)
 		return;
 
-	length = strlen(text);
-	if(length == 0)
+	if(text[0] == '\0')
 		return;
 
-	length++;
-	part_text = (Exfont_one_char*)malloc(sizeof(Exfont_one_char) * length);
-	x_start = (float*)malloc(sizeof(float) * length);
-	if(!part_text || !x_start)
+	for(scan = text; *scan != '\0'; scan++)
 	{
-		free(part_text);
-		free(x_start);
-		part_text = NULL;
-		x_start = NULL;
-		return;
+		if(*scan == '\n')
+			line_count_max++;
 	}
 
-	text_size_x *= 1.2f;
-	text_size_y *= 1.2f;
+	sx = text_size_x * 1.2f;
+	sy = text_size_y * 1.2f;
 
-	Exfont_text_parse(text, part_text, (length - 1), &array_count);
-	array_count++;
-
-	if(x_align == DRAW_X_ALIGN_LEFT && y_align == DRAW_Y_ALIGN_TOP && texture_position == DRAW_BACKGROUND_NONE)
-		x = original_x;
-	else
+	if(!simple_layout)
 	{
-		uint32_t lines = 0;
-		float x_min = 0, y_offset = 0, used_x = 0, used_x_max = 0, used_y_max = 0;
+		uint32_t li = 0;
+		float used_x_max = 0;
+		float total_h = 0;
+		const char* q = text;
 		Draw_image_data* image_data_pointer = NULL;
+		float x_min = original_x;
 
-		new_line = false;
-		eof = false;
-		start_pos = UINT32_MAX;
+		x_start = (float*)malloc(sizeof(float) * line_count_max);
+		if(!x_start)
+			return;
 
-		for (uint32_t i = 0; i < (array_count + 1); i++)
+		for(;;)
 		{
-			if (part_text[i].buffer[0] == 0x0)
-				eof = true;
-			else if (part_text[i].buffer[0] == 0xA)
-				new_line = true;
+			const char* nl = strchr(q, '\n');
+			size_t len = nl ? (size_t)(nl - q) : strlen(q);
+			float w, h;
+			float lh;
 
-			if(start_pos == UINT32_MAX)
-				start_pos = i;
+			draw_measure_line(q, len, sx, sy, &w, &h);
+			lh = fmaxf(h, 25.0f * sy);
+			if(w > used_x_max)
+				used_x_max = w;
+			total_h += lh;
 
-			if(new_line || eof || i == (array_count - 1))
-			{
-				Exfont_draw_get_text_size(&part_text[start_pos], (i - start_pos), text_size_x, text_size_y, &width, &height);
+			if(x_align == DRAW_X_ALIGN_CENTER)
+				x_start[li] = ((box_size_x - w) / 2.0f) + original_x;
+			else if(x_align == DRAW_X_ALIGN_RIGHT)
+				x_start[li] = (box_size_x - w) + original_x;
+			else
+				x_start[li] = original_x;
 
-				start_pos = UINT32_MAX;
-				used_x += width;
-				if(used_x > used_x_max)
-					used_x_max = used_x;
-				if(height > used_y_max)
-					used_y_max = height;
-			}
-
-			if(eof)
+			li++;
+			if(!nl)
 				break;
-
-			if(new_line)
-			{
-				height = 25 * text_size_y;
-				if(height > used_y_max)
-					used_y_max = height;
-
-				y_offset += used_y_max;
-				if(x_align == DRAW_X_ALIGN_CENTER)
-					x_start[lines] = ((box_size_x - used_x) / 2) + x;
-				else if(x_align == DRAW_X_ALIGN_RIGHT)
-					x_start[lines] = box_size_x - used_x + x;
-
-				used_y_max = 0;
-				used_x = 0;
-				lines++;
-				new_line = false;
-			}
+			q = nl + 1;
 		}
-		used_y_max = y_offset + used_y_max;
 
-		if(x_align == DRAW_X_ALIGN_CENTER)
-			x_start[lines] = ((box_size_x - used_x) / 2.0f) + x;
-		else if(x_align == DRAW_X_ALIGN_RIGHT)
-			x_start[lines] = box_size_x - used_x + x;
 		if(y_align == DRAW_Y_ALIGN_CENTER)
-			y = ((box_size_y - used_y_max) / 2.0f) + y;
+			y = ((box_size_y - total_h) / 2.0f) + original_y;
 		else if(y_align == DRAW_Y_ALIGN_BOTTOM)
-			y = box_size_y - used_y_max + y;
+			y = (box_size_y - total_h) + original_y;
 
-		lines++;
-
-		if(x_align == DRAW_X_ALIGN_LEFT)
+		if(x_align == DRAW_X_ALIGN_CENTER || x_align == DRAW_X_ALIGN_RIGHT)
 		{
-			x = original_x;
-			x_min = original_x;
-		}
-		else if(x_align == DRAW_X_ALIGN_CENTER || x_align == DRAW_X_ALIGN_RIGHT)
-		{
-			x = x_start[line_count];
+			x = x_start[0];
 			x_min = x_start[0];
-			for (uint32_t i = 1; i < lines; i++)
+			for(uint32_t i = 1; i < li; i++)
 			{
 				if(x_min > x_start[i])
 					x_min = x_start[i];
 			}
+		}
+		else
+		{
+			x = original_x;
+			x_min = original_x;
 		}
 
 		image_data_pointer = (Draw_image_data*)background_image;
 		if(texture_position == DRAW_BACKGROUND_ENTIRE_BOX)
 			Draw_texture(image_data_pointer, texture_abgr8888, original_x, original_y, box_size_x, box_size_y);
 		else if(texture_position == DRAW_BACKGROUND_UNDER_TEXT)
-			Draw_texture(image_data_pointer, texture_abgr8888, x_min, y, used_x_max, used_y_max);
+			Draw_texture(image_data_pointer, texture_abgr8888, x_min, y, used_x_max, total_h);
 	}
 
-	new_line = false;
-	eof = false;
-	start_pos = UINT32_MAX;
-	for (uint32_t i = 0; i < array_count; i++)
 	{
-		if (part_text[i].buffer[0] == 0x0)
-			eof = true;
-		else if (part_text[i].buffer[0] == 0xA)
-			new_line = true;
+		uint32_t line_idx = 0;
+		const char* q = text;
+		float draw_x = original_x;
 
-		if(start_pos == UINT32_MAX)
-			start_pos = i;
+		if(!simple_layout && (x_align == DRAW_X_ALIGN_CENTER || x_align == DRAW_X_ALIGN_RIGHT))
+			draw_x = x_start[0];
 
-		if(new_line || eof || i == (array_count - 1))
+		for(;;)
 		{
-			Exfont_draw_external_fonts(&part_text[start_pos], (i - start_pos), x, y, text_size_x, text_size_y, abgr8888, &width, &height);
+			const char* nl = strchr(q, '\n');
+			size_t len = nl ? (size_t)(nl - q) : strlen(q);
+			float w_line, h;
 
-			start_pos = UINT32_MAX;
-			x += width;
-		}
+			draw_measure_line(q, len, sx, sy, &w_line, &h);
+			(void)w_line;
+			draw_line_c2d(q, len, draw_x, y, 0.5f, sx, sy, abgr8888);
 
-		if(eof)
-			break;
+			y += fmaxf(h, 25.0f * sy);
 
-		if(new_line)
-		{
-			y += 25 * text_size_y;
-			if(x_align == DRAW_X_ALIGN_LEFT)
-				x = original_x;
-			else if(x_align == DRAW_X_ALIGN_CENTER || x_align == DRAW_X_ALIGN_RIGHT)
-			{
-				line_count++;
-				x = x_start[line_count];
-			}
+			if(!nl)
+				break;
+			q = nl + 1;
+			line_idx++;
+			if(!simple_layout && (x_align == DRAW_X_ALIGN_CENTER || x_align == DRAW_X_ALIGN_RIGHT))
+				draw_x = x_start[line_idx];
 			else
-				x = original_x;
-
-			new_line = false;
+				draw_x = original_x;
 		}
 	}
 
-	free(part_text);
 	free(x_start);
-	part_text = NULL;
-	x_start = NULL;
 }
 
 static void Draw_texture_internal(C2D_Image image, uint32_t abgr8888, float x, float y, float x_size, float y_size, float angle, float center_x, float center_y)

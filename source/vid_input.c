@@ -176,6 +176,11 @@ static void Vid_process_hid_cmd_queue(void)
 			Vid_panel_toggle_quick_menu();
 			break;
 
+		case VID_CMD_PANEL_TOGGLE_PLAYER_FILES:
+			Vid_panel_toggle_player_files();
+			Util_hid_reset_key_state(HID_KEY_BIT_ALL);
+			break;
+
 		case VID_CMD_PANEL_NAV_UP:
 			Vid_panel_nav_select(-1);
 			break;

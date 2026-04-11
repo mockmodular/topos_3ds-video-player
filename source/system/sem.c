@@ -1,4 +1,4 @@
-/* Settings engine: config/state persistence, LCD HW thread, worker (log dump).
+/* Settings engine: config/state persistence, LCD HW thread.
  * Full-screen Sem UI (Sem_main / Sem_hid) removed — use player Settings panel only. */
 
 #include "system/sem.h"
@@ -13,7 +13,7 @@
 
 #include "3ds.h"
 
-#include "system/menu.h"
+#include "system/topos_setting.h"
 #include "system/draw/draw.h"
 #include "system/util/err.h"
 #include "system/util/file.h"
@@ -31,11 +31,9 @@ typedef struct {
 } Sem_internal_state;
 
 static void Sem_get_system_info(void);
-static void Sem_worker_callback(void);
 void Sem_hw_config_thread(void* arg);
 static uint32_t Sem_persist_fake_model_to_disk(void);
 
-static bool sem_main_run = false;
 static bool sem_already_init = false;
 static bool sem_thread_run = false;
 static Sem_internal_state sem_internal_state = { 0, };
@@ -46,19 +44,16 @@ static Thread sem_hw_config_thread = NULL;
 
 static const char* sem_model_name[2] = { "O3DS", "N3DS", };
 
+/* 与 CFG 无关：可用 CPU 数 == 4 → N3DS 档，否则 O3DS 档（须已在 Util_init 之后调用）。 */
+static Sem_model sem_console_model_from_cpu_cores(void)
+{
+	return (Util_available_cpu_core_count() == 4u) ? DEF_SEM_MODEL_N3DS : DEF_SEM_MODEL_O3DS;
+}
+
 bool Sem_query_init_flag(void)
 {
 	return sem_already_init;
 }
-
-bool Sem_query_running_flag(void)
-{
-	return sem_main_run;
-}
-
-void Sem_resume(void) { }
-
-void Sem_suspend(void) { }
 
 void Sem_get_config(Sem_config* config)
 {
@@ -95,15 +90,14 @@ void Sem_get_state(Sem_state* state)
 static uint32_t Sem_persist_fake_model_to_disk(void)
 {
 	uint32_t result = DEF_ERR_OTHER;
+	Topos_md_bundle b = { 0, };
 
-	if(sem_internal_state.fake_model < DEF_SEM_MODEL_MAX)
-	{
-		uint8_t fake_buf[2] = { 1, sem_internal_state.fake_model };
-		DEF_LOG_RESULT_SMART(result, Util_file_save_to_file("fake_model.txt", DEF_MENU_MAIN_DIR, fake_buf, sizeof(fake_buf), true), (result == DEF_SUCCESS), result);
-	}
-	else
-		DEF_LOG_RESULT_SMART(result, Util_file_delete_file("fake_model.txt", DEF_MENU_MAIN_DIR), (result == DEF_SUCCESS), result);
-
+	(void)Topos_md_read_bundle(&b);
+	DEF_LOG_RESULT_SMART(result, Topos_md_write_bundle(
+		b.sem_text ? b.sem_text : "", b.sem_len,
+		b.vid_text ? b.vid_text : "", b.vid_len,
+		sem_internal_state.fake_model), (result == DEF_SUCCESS), result);
+	Topos_md_bundle_free(&b);
 	return result;
 }
 
@@ -125,18 +119,7 @@ void Sem_set_fake_model(uint8_t fake_model)
 	if(fake_model < DEF_SEM_MODEL_MAX)
 		sem_state.console_model = fake_model;
 	else
-	{
-		uint8_t model = 0;
-		if(CFGU_GetSystemModel(&model) == DEF_SUCCESS)
-		{
-			if(model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL || model == CFG_MODEL_N2DSXL)
-				sem_state.console_model = DEF_SEM_MODEL_N3DS;
-			else
-				sem_state.console_model = DEF_SEM_MODEL_O3DS;
-		}
-		else
-			sem_state.console_model = DEF_SEM_MODEL_O3DS;
-	}
+		sem_state.console_model = sem_console_model_from_cpu_cores();
 
 	if(!DEF_SEM_MODEL_IS_NEW(sem_state.console_model))
 		osSetSpeedupEnable(false);
@@ -164,9 +147,6 @@ void Sem_request_log_dump(void)
 void Sem_init(void)
 {
 	DEF_LOG_STRING("Initializing...");
-	uint8_t model = 0;
-	uint8_t* read_cache = NULL;
-	uint32_t read_size = 0;
 	uint32_t result = DEF_ERR_OTHER;
 	Str_data data[14] = { 0, };
 	Sem_config config = { 0, };
@@ -194,72 +174,55 @@ void Sem_init(void)
 		return;
 	}
 
-	if(CFGU_GetSystemModel(&model) == DEF_SUCCESS)
-	{
-		if(model == CFG_MODEL_N3DS || model == CFG_MODEL_N3DSXL || model == CFG_MODEL_N2DSXL)
-			state.console_model = DEF_SEM_MODEL_N3DS;
-		else
-			state.console_model = DEF_SEM_MODEL_O3DS;
-		DEF_LOG_FORMAT("Model : %s", sem_model_name[state.console_model]);
-	}
+	state.console_model = sem_console_model_from_cpu_cores();
+	DEF_LOG_FORMAT("Model : %s (cpu cores=%" PRIu8 ")", sem_model_name[state.console_model],
+		Util_available_cpu_core_count());
 
-	if(Util_file_load_from_file("fake_model.txt", DEF_MENU_MAIN_DIR, &read_cache, 8, 0, &read_size) == DEF_SUCCESS)
 	{
-		uint8_t fm = 255;
-		if(read_size >= 2 && read_cache[0] == 1 && read_cache[1] < DEF_SEM_MODEL_MAX)
-			fm = read_cache[1];
-		else if(read_size >= 1)
+		Topos_md_bundle bundle = { 0, };
+		(void)Topos_md_read_bundle(&bundle);
+
+		if(bundle.fake_model < DEF_SEM_MODEL_MAX)
 		{
-			fm = read_cache[0];
-			if(fm < 4)
-				fm = (fm <= 1) ? DEF_SEM_MODEL_O3DS : DEF_SEM_MODEL_N3DS;
-			else if(fm < 6)
-				fm = (fm <= 2) ? DEF_SEM_MODEL_O3DS : DEF_SEM_MODEL_N3DS;
-			else
-				fm = 255;
-		}
-		if(fm < DEF_SEM_MODEL_MAX)
-		{
-			state.console_model = fm;
+			state.console_model = bundle.fake_model;
 			sem_internal_state.fake_model = state.console_model;
 			DEF_LOG_FORMAT("Using fake model : %s", sem_model_name[state.console_model]);
 		}
 		else
 			sem_internal_state.fake_model = 255;
-		free(read_cache);
-	}
-	else
-		sem_internal_state.fake_model = 255;
 
-	if(!DEF_SEM_MODEL_IS_NEW(state.console_model))
-		osSetSpeedupEnable(false);
+		if(!DEF_SEM_MODEL_IS_NEW(state.console_model))
+			osSetSpeedupEnable(false);
 
-	DEF_LOG_RESULT_SMART(result, Util_file_load_from_file("settings.txt", DEF_MENU_MAIN_DIR, &read_cache, 0x1000, 0, &read_size), (result == DEF_SUCCESS), result);
-	if(result == DEF_SUCCESS)
-	{
-		DEF_LOG_RESULT_SMART(result, Util_parse_file((char*)read_cache, 14, data), (result == DEF_SUCCESS), result);
-		if(result != DEF_SUCCESS)
-			DEF_LOG_RESULT_SMART(result, Util_parse_file((char*)read_cache, 13, data), (result == DEF_SUCCESS), result);
-		if(result != DEF_SUCCESS)
-			DEF_LOG_RESULT_SMART(result, Util_parse_file((char*)read_cache, 12, data), (result == DEF_SUCCESS), result);
-		if(result != DEF_SUCCESS)
-			DEF_LOG_RESULT_SMART(result, Util_parse_file((char*)read_cache, 11, data), (result == DEF_SUCCESS), result);
-
-		if(!Util_str_has_data(&data[11]))
-		{
-			Util_str_init(&data[11]);
-			Util_str_set(&data[11], "175");
-		}
-		if(!Util_str_has_data(&data[12]))
-		{
-			Util_str_init(&data[12]);
-			Util_str_set(&data[12], "175");
-		}
-		if(!Util_str_has_data(&data[11]) || !Util_str_has_data(&data[12]))
-			result = DEF_ERR_OUT_OF_MEMORY;
+		result = DEF_ERR_OTHER;
+		if(bundle.sem_len > 0 && bundle.sem_text)
+			result = DEF_SUCCESS;
 
 		if(result == DEF_SUCCESS)
 		{
+			DEF_LOG_RESULT_SMART(result, Util_parse_file(bundle.sem_text, 14, data), (result == DEF_SUCCESS), result);
+			if(result != DEF_SUCCESS)
+				DEF_LOG_RESULT_SMART(result, Util_parse_file(bundle.sem_text, 13, data), (result == DEF_SUCCESS), result);
+			if(result != DEF_SUCCESS)
+				DEF_LOG_RESULT_SMART(result, Util_parse_file(bundle.sem_text, 12, data), (result == DEF_SUCCESS), result);
+			if(result != DEF_SUCCESS)
+				DEF_LOG_RESULT_SMART(result, Util_parse_file(bundle.sem_text, 11, data), (result == DEF_SUCCESS), result);
+
+			if(!Util_str_has_data(&data[11]))
+			{
+				Util_str_init(&data[11]);
+				Util_str_set(&data[11], "175");
+			}
+			if(!Util_str_has_data(&data[12]))
+			{
+				Util_str_init(&data[12]);
+				Util_str_set(&data[12], "175");
+			}
+			if(!Util_str_has_data(&data[11]) || !Util_str_has_data(&data[12]))
+				result = DEF_ERR_OUT_OF_MEMORY;
+
+			if(result == DEF_SUCCESS)
+			{
 			config.time_to_turn_off_lcd = 0;
 			config.scroll_speed = 0.5;
 			/* <4> 曾为 Send app info，已移除；读档时忽略 */
@@ -289,9 +252,10 @@ void Sem_init(void)
 			}
 			config.time_to_enter_sleep = 0;
 			sem_config = config;
+			}
 		}
-		free(read_cache);
-		read_cache = NULL;
+		Topos_md_boot_stash_vid(&bundle);
+		Topos_md_bundle_free(&bundle);
 	}
 
 	for(uint8_t i = 0; i < 14; i++)
@@ -307,9 +271,6 @@ void Sem_init(void)
 	Util_watch_add(WATCH_HANDLE_SETTINGS_MENU, &sem_config.screen_mode, sizeof(sem_config.screen_mode));
 	Util_watch_add(WATCH_HANDLE_SETTINGS_MENU, &sem_config.is_eco, sizeof(sem_config.is_eco));
 
-	DEF_LOG_RESULT_SMART(result, Menu_add_worker_thread_callback(Sem_worker_callback), result, result);
-
-	sem_main_run = false;
 	Util_hid_reset_key_state(HID_KEY_BIT_ALL);
 	Draw_set_refresh_needed(true);
 	sem_already_init = true;
@@ -348,12 +309,17 @@ void Sem_exit(void)
 
 	sem_already_init = false;
 	sem_thread_run = false;
-	Menu_remove_worker_thread_callback(Sem_worker_callback);
 
-	DEF_LOG_RESULT_SMART(result, Util_file_save_to_file("settings.txt", DEF_MENU_MAIN_DIR, (uint8_t*)data.buffer, data.length, true), (result == DEF_SUCCESS), result);
+	{
+		Topos_md_bundle b = { 0, };
+		(void)Topos_md_read_bundle(&b);
+		DEF_LOG_RESULT_SMART(result, Topos_md_write_bundle(
+			data.buffer, data.length,
+			b.vid_text ? b.vid_text : "", b.vid_len,
+			sem_internal_state.fake_model), (result == DEF_SUCCESS), result);
+		Topos_md_bundle_free(&b);
+	}
 	Util_str_free(&data);
-
-	DEF_LOG_RESULT_SMART(result, Sem_persist_fake_model_to_disk(), (result == DEF_SUCCESS), result);
 
 	DEF_LOG_RESULT_SMART(result, threadJoin(sem_hw_config_thread, DEF_THREAD_WAIT_TIME), (result == DEF_SUCCESS), result);
 	threadFree(sem_hw_config_thread);
@@ -419,16 +385,6 @@ static void Sem_get_system_info(void)
 	Util_sync_lock(&sem_config_state_mutex, UINT64_MAX);
 	sem_state = state;
 	Util_sync_unlock(&sem_config_state_mutex);
-}
-
-static void Sem_worker_callback(void)
-{
-	if(!sem_already_init)
-		return;
-
-	/* Dump logs 已禁用（原 sem_dump_log_request + Util_log_dump）
-	if(sem_dump_log_request) { ... }
-	*/
 }
 
 void Sem_hw_config_thread(void* arg)

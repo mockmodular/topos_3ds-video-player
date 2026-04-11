@@ -37,6 +37,15 @@
 #include "system/util/util.h"
 #include "video_player.h"
 
+/* CPU 占用条：仅在布局有效化时读一次可用核数（2→只画 C0 C1；否则画 C0–C3），非每帧。 */
+static bool s_cpu_bar_layout_ready;
+static int  s_cpu_bar_core_slots; /* 2 或 4 */
+
+void Vid_panel_player_invalidate_cpu_bar_layout(void)
+{
+	s_cpu_bar_layout_ready = false;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * 状态栏 + 编解码信息 + CPU/内存诊断区（PLAYER 面板底屏上部）
  * ───────────────────────────────────────────────────────────────────────────*/
@@ -56,45 +65,47 @@ void Vid_panel_player_draw_status(uint32_t color,
 
 	Util_str_init(&format_str);
 
-	// ——— VIDEO codec ———————————————————————————————————————— y=33
+	// ——— VIDEO codec ————————————————————————————————————————
 	Util_str_format(&format_str, "V:%-6s",
 		vid_player.video_info[EYE_LEFT].format_name);
-	Draw(&format_str, 2, 33, 0.40, 0.40, color);
+	Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_V_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
-	// ——— AUDIO codec ———————————————————————————————————————— y=45
+	// ——— AUDIO codec ————————————————————————————————————————
 	Util_str_format(&format_str, "A:%-6s",
 		vid_player.audio_info[0].format_name);
-	Draw(&format_str, 2, 45, 0.40, 0.40, color);
+	Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_A_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
-	// ——— resolution + fps + SBS/3D (same row, y=57) ——————————————————————
+	// ——— resolution（左）与 fps（固定列）分开绘制；SBS/3D 靠右固定列 —————————
 	// AV1: show visible width/height (decoder context), not 128-padded codec_*.
 	{
-		const float res_row_y   = 57.0f;
-		const float res_scale   = 0.40f;
-		const float sbs_gap_px  = 10.0f;
-		Media_v_info* vi        = &vid_player.video_info[EYE_LEFT];
+		const float res_scale = DEF_DRAW_TEXT_SCALE;
+		Media_v_info* vi      = &vid_player.video_info[EYE_LEFT];
 		uint32_t rw = vi->codec_width;
 		uint32_t rh = vi->codec_height;
-		double   res_tw = 0.0;
-		double   res_th = 0.0;
 
 		if(vi->is_av1_codec && vi->width > 0 && vi->height > 0)
 		{
 			rw = vi->width;
 			rh = vi->height;
 		}
-		Util_str_format(&format_str, "%" PRIu32 "x%" PRIu32 "  @%.0ffps",
-			rw, rh, vi->framerate);
-		Draw(&format_str, 2, res_row_y, res_scale, res_scale, color);
-		Draw_get_text_size(DEF_STR_NEVER_NULL(&format_str), res_scale, res_scale, &res_tw, &res_th);
-		(void)res_th;
+		/* 无视频/未打开文件时为 0x0；有流后为例如 400x240 */
+		Util_str_format(&format_str, "%" PRIu32 "x%" PRIu32, rw, rh);
+		Draw(&format_str, VP_PLAYER_UI_STATUS_RES_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, color);
+
+		{
+			unsigned fps_i = 0;
+			if(vi->framerate > 0.0)
+				fps_i = (unsigned)(vi->framerate + 0.5);
+			Util_str_format(&format_str, "fps%uhz", fps_i);
+			Draw(&format_str, VP_PLAYER_UI_STATUS_FPS_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, color);
+		}
 
 		Util_str_format(&format_str, "SBS:%d  3D:%d",
 			(int)vid_player.is_sbs_3d, (int)Draw_is_3d_mode());
-		Draw(&format_str, 2.0f + (float)res_tw + sbs_gap_px, res_row_y, res_scale, res_scale, DEF_DRAW_WEAK_WHITE);
+		Draw(&format_str, VP_PLAYER_UI_RES_SBS_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, DEF_DRAW_WEAK_WHITE);
 	}
 
-	// ——— DECODE ————————————————————————————————————————————— y=70
+	// ——— DECODE（两行：解码/纹理一行，SAR/ASM 一行，避免单行过长）——————————————
 	{
 		static int cached_cpu_flags = -1;
 		if(cached_cpu_flags < 0)
@@ -102,27 +113,39 @@ void Vid_panel_player_draw_status(uint32_t color,
 		const char* asm_tag =
 			(cached_cpu_flags & AV_CPU_FLAG_ARMV6)   ? "A6"  :
 			(cached_cpu_flags & AV_CPU_FLAG_ARMV5TE) ? "A5"  : "--";
-		Util_str_format(&format_str, "Dec:%-9s  Tex:%-7s  SAR:%d/%d  ASM:%s",
-		(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? "MVD/HW" :
-		(vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION) ?
-			(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R ? "NEONy2r" :
-			vid_player.is_sbs_3d ? "Y2Rx2" : "SW/Y2R") : "SW/CPU",
-			Vid_effective_use_linear_texture_filter(EYE_LEFT) ? "LINEAR" : "NEAREST",
+		const char* dec_tag =
+			(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? "MVD/HW" :
+			(vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION) ?
+				(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R ? "NEONy2r" :
+				vid_player.is_sbs_3d ? "Y2Rx2" : "SW/Y2R") : "SW/CPU";
+		const char* tex_tag =
+			Vid_effective_use_linear_texture_filter(EYE_LEFT) ? "LINEAR" : "NEAR";
+
+		Util_str_format(&format_str, "Dec:%s  Tex:%s", dec_tag, tex_tag);
+		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
+
+		Util_str_format(&format_str, "SAR:%d/%d  ASM:%s",
 			(int)vid_player.video_info[EYE_LEFT].sar_width,
 			(int)vid_player.video_info[EYE_LEFT].sar_height,
 			asm_tag);
+		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_DEC2_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
 	}
-	Draw(&format_str, 2, 70, 0.40, 0.40, DEF_DRAW_GREEN);
 
-	// ——— Lin/Heap (y=85) + CPU 标题 + 每可用核心一条（O3DS: C0–C1；N3DS: C0–C3）—
+	// ——— Lin / Heap（分列）+ CPU 标题 + CPU 条（布局在首次绘制或 invalidate 时定一次：2 核档=仅 C0 C1，否则 C0–C3）
 	{
 		static uint64_t diag_ts = 0;
 		static unsigned long diag_lin_kb = 0, diag_heap_free_kb = 0, diag_heap_tot_kb = 0;
 		static double diag_c[4] = {0.0, 0.0, 0.0, 0.0};
 		static u32 diag_cpu_mhz = 0;
-		const int cpu_header_y = 98;
-		const int bar0_y       = 111;
-		const int bar_stride   = 14;
+		int k_draw_max;
+
+		if(!s_cpu_bar_layout_ready)
+		{
+			s_cpu_bar_core_slots = (Util_available_cpu_core_count() == 2) ? 2 : 4;
+			s_cpu_bar_layout_ready = true;
+		}
+		k_draw_max = s_cpu_bar_core_slots;
+
 		uint64_t now = osGetTime();
 		if(now - diag_ts >= 1000)
 		{
@@ -132,46 +155,51 @@ void Vid_panel_player_draw_status(uint32_t color,
 			struct mallinfo mi = mallinfo();
 			diag_heap_free_kb = mi.fordblks / 1024;
 			diag_heap_tot_kb  = (mi.uordblks + mi.fordblks) / 1024;
-			for(k = 0; k < 4; k++)
+			for(k = 0; k < k_draw_max; k++)
 			{
 				if(!Util_is_core_available((uint8_t)k))
-					continue;
 				{
-					double v = (double)Util_cpu_usage_get_cpu_usage(k);
+					diag_c[k] = 0.0;
+					continue;
+				}
+				{
+					double v = (double)Util_cpu_usage_get_cpu_usage((uint8_t)k);
 					diag_c[k] = isnan(v) ? 0.0 : v;
 				}
 			}
+			for(k = k_draw_max; k < 4; k++)
+				diag_c[k] = 0.0;
 			u32 tref_idx = OS_SharedConfig->timeref_cnt & 1;
 			diag_cpu_mhz = (OS_SharedConfig->timeref[tref_idx].sysclock_hz > 0)
 				? (u32)(OS_SharedConfig->timeref[tref_idx].sysclock_hz / 1000000) : 0;
 		}
 
-		Util_str_format(&format_str, "Lin:%luKB   Heap:%lu/%luKB",
-			diag_lin_kb, diag_heap_free_kb, diag_heap_tot_kb);
-		Draw(&format_str, 2, 85, 0.39, 0.39, DEF_DRAW_YELLOW);
+		Util_str_format(&format_str, "Lin:%luKB", diag_lin_kb);
+		Draw(&format_str, VP_PLAYER_UI_DIAG_LIN_X, (float)VP_PLAYER_STATUS_ROW_DIAG_LIN_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
+
+		Util_str_format(&format_str, "Heap:%lu/%luKB",
+			diag_heap_free_kb, diag_heap_tot_kb);
+		Draw(&format_str, VP_PLAYER_UI_DIAG_HEAP_X, (float)VP_PLAYER_STATUS_ROW_DIAG_LIN_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
 
 		Util_str_format(&format_str, "CPU  %luMHz", (unsigned long)diag_cpu_mhz);
-		Draw(&format_str, 2, cpu_header_y, 0.44, 0.44, DEF_DRAW_YELLOW);
+		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, VP_PLAYER_STATUS_ROW_CPUHDR_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
 
 		{
 			int k;
 			int row = 0;
-			for(k = 0; k < 4; k++)
+			for(k = 0; k < k_draw_max; k++)
 			{
-				if(!Util_is_core_available((uint8_t)k))
-					continue;
-
-				int    bar_y  = bar0_y + row * bar_stride;
+				int    bar_y  = VP_PLAYER_STATUS_BAR0_Y + row * VP_PLAYER_STATUS_BAR_STRIDE;
 				double pct    = diag_c[k] > 100.0 ? 100.0 : diag_c[k];
 				int    fill_w = (int)(265.0 * pct / 100.0);
 
 				Util_str_format(&format_str, "C%d", k);
-				Draw(&format_str, 2, bar_y, 0.40, 0.40, DEF_DRAW_YELLOW);
-				Draw_texture(&background, DEF_DRAW_WEAK_WHITE, 18, bar_y + 2, 265, 7);
+				Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, bar_y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
+				Draw_texture(&background, DEF_DRAW_WEAK_WHITE, VP_PLAYER_UI_STATUS_BAR_X, bar_y + 2, 265, 7);
 				if(fill_w > 0)
-					Draw_texture(&background, DEF_DRAW_YELLOW, 18, bar_y + 2, fill_w, 7);
+					Draw_texture(&background, DEF_DRAW_YELLOW, VP_PLAYER_UI_STATUS_BAR_X, bar_y + 2, fill_w, 7);
 				Util_str_format(&format_str, "%.0f%%", pct);
-				Draw(&format_str, 286, bar_y, 0.40, 0.40, DEF_DRAW_YELLOW);
+				Draw(&format_str, VP_PLAYER_UI_STATUS_PCT_X, bar_y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
 				row++;
 			}
 		}
@@ -183,7 +211,7 @@ void Vid_panel_player_draw_status(uint32_t color,
 		if(Util_sync_lock(&vid_player.texture_init_free_lock, 0) == DEF_SUCCESS)
 		{
 			Vid_large_texture_draw(&vid_player.large_image[image_index_left][EYE_LEFT],
-				video_x_offset_bottom, video_y_offset_bottom,
+				video_x_offset_bottom + (double)VP_PLAYER_UI_STATUS_THUMB_SHIFT_X, video_y_offset_bottom,
 				image_width_left, image_height_left);
 			Util_sync_unlock(&vid_player.texture_init_free_lock);
 		}
@@ -194,11 +222,13 @@ void Vid_panel_player_draw_status(uint32_t color,
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * 时间条 / seek 进度
+ * 字号与 Vid_panel_player_draw_status 相同：均为 DEF_DRAW_TEXT_SCALE（Draw 内再 ×1.2 → C2D）。
  * ───────────────────────────────────────────────────────────────────────────*/
 void Vid_panel_player_draw_timebar(uint32_t color, uint64_t current_ts)
 {
 	Str_data format_str  = { 0, };
 	Str_data time_str[2] = { 0, };
+	const float txt_sc = DEF_DRAW_TEXT_SCALE;
 
 	Util_str_init(&format_str);
 	Util_str_init(&time_str[0]);
@@ -210,22 +240,20 @@ void Vid_panel_player_draw_timebar(uint32_t color, uint64_t current_ts)
 	Util_convert_seconds_to_time(current_bar_pos, &time_str[0]);
 	Util_convert_seconds_to_time(DEF_UTIL_MS_TO_S_D(sv.duration_ms), &time_str[1]);
 
-	/* 与进度条相对位置：baseline 在 VP_PROGRESS_Y 上方固定间距（随 GROUP_UP 一起上移） */
-	const double timebar_text_y = (double)VP_PROGRESS_Y - 19.5;
-	const int    timebar_seek_x = 170;
+	const float timebar_text_y = (float)VP_PROGRESS_Y - VP_TIMEBAR_TEXT_ABOVE_PROGRESS;
 
 	Util_str_format(&format_str, "%s/%s", DEF_STR_NEVER_NULL(&time_str[0]), DEF_STR_NEVER_NULL(&time_str[1]));
-	Draw(&format_str, 10, timebar_text_y, 0.5, 0.5, color);
+	Draw(&format_str, VP_TIMEBAR_TIME_X, timebar_text_y, txt_sc, txt_sc, color);
 
 	if(sv.is_seeking)
 	{
-		Util_str_format(&format_str, "%s(%.2f%%)", vid_msg[MSG_SEEKING].buffer, sv.seek_progress);
-		Draw(&format_str, timebar_seek_x, timebar_text_y, 0.5, 0.5, color);
+		Util_str_format(&format_str, "%s", "seeking...");
+		Draw(&format_str, VP_TIMEBAR_SEEK_X, timebar_text_y, txt_sc, txt_sc, color);
 	}
 	else if(vid_player.state == PLAYER_STATE_BUFFERING)
 	{
-		Util_str_format(&format_str, "%s(%.2f%%)", vid_msg[MSG_PROCESSING_VIDEO].buffer, vid_player.buffer_progress);
-		Draw(&format_str, timebar_seek_x, timebar_text_y, 0.5, 0.5, color);
+		Util_str_format(&format_str, "buffering... (%.2f%%)", vid_player.buffer_progress);
+		Draw(&format_str, VP_TIMEBAR_SEEK_X, timebar_text_y, txt_sc, txt_sc, color);
 	}
 
 	(void)current_bar_pos;

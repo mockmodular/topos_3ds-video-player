@@ -8,7 +8,6 @@
 
 #include "system/draw/draw.h"
 #include "system/util/err_types.h"
-#include "system/util/file.h"
 #include "system/util/hid.h"
 #include "system/util/str.h"
 #include "system/util/sync.h"
@@ -111,54 +110,6 @@ void Util_log_exit(void)
 	Util_watch_remove(WATCH_HANDLE_LOG, &util_log_x);
 	Util_watch_remove(WATCH_HANDLE_LOG, &util_log_y);
 	Util_sync_destroy(&util_log_mutex);
-}
-
-uint32_t Util_log_dump(const char* file_name, const char* dir_path)
-{
-	uint32_t result = DEF_ERR_OTHER;
-	Str_data log = { 0, };
-
-	if(!util_log_init)
-		goto not_inited;
-
-	if(!file_name || !dir_path)
-		goto invalid_arg;
-
-	result = Util_str_init(&log);
-	if(result != DEF_SUCCESS)
-	{
-		DEF_LOG_RESULT(Util_str_init, false, result);
-		goto error_other;
-	}
-
-	for(uint32_t i = 0; i < DEF_LOG_BUFFER_LINES; i++)
-	{
-		if(!Util_str_has_data(&util_log_logs[i]))
-			continue;
-
-		Util_str_add(&log, util_log_logs[i].buffer);
-		Util_str_add(&log, "\n");
-	}
-
-	if(Util_str_has_data(&log))
-	{
-		result = Util_file_save_to_file(file_name, dir_path, (uint8_t*)log.buffer, log.length, true);
-		if(result != DEF_SUCCESS)
-			DEF_LOG_RESULT(Util_file_save_to_file, false, result);
-	}
-
-	Util_str_free(&log);
-
-	return result;
-
-	not_inited:
-	return DEF_ERR_NOT_INITIALIZED;
-
-	invalid_arg:
-	return DEF_ERR_INVALID_ARG;
-
-	error_other:
-	return result;
 }
 
 bool Util_log_query_show_flag(void)
@@ -359,12 +310,12 @@ void Util_log_draw(void)
 {
 	if(!util_log_init)
 	{
-		Draw_c("Log API is not initialized.\nPress A to close.", 0, 10, 0.5, 0.5, DEF_DRAW_RED);
+		Draw_c("Log API is not initialized.\nPress A to close.", 0, 10, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_RED);
 		return;
 	}
 
 	for (uint16_t i = 0; i < DISPLAYED_LINES; i++)
-		Draw(&util_log_logs[util_log_y + i], util_log_x, 10.0 + (i * 10), 0.425, 0.425, DEF_LOG_COLOR);
+		Draw(&util_log_logs[util_log_y + i], util_log_x, 10.0 + (i * 10), DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_LOG_COLOR);
 }
 
 static uint32_t Util_log_add_internal(uint32_t log_index, bool append_time, const char* caller, const char* format_string, va_list args)

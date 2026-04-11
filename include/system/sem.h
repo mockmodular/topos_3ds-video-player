@@ -3,8 +3,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define DEF_SEM_CHECK_UPDATE_URL		/*(const char*)(*/"https://script.google.com/macros/s/AKfycbwTd3jzV0npUE9MNKmZIv3isazVR5D9_7A8rexsG1vr9SE7iavDBxgtzlph8dZipwu9/exec"/*)*/
-
 #define DEF_SEM_ENABLE_ICON
 //#define DEF_SEM_ENABLE_NAME
 #define DEF_SEM_ICON_PATH				(const char*)"romfs:/gfx/draw/icon/sem_icon.t3x"
@@ -40,10 +38,8 @@ typedef uint8_t Sem_model;
 #define DEF_SEM_MODEL_NEW3DS				DEF_SEM_MODEL_N3DS
 #define DEF_SEM_MODEL_NEW3DSXL				DEF_SEM_MODEL_N3DS
 
-//You need to enable DEF_CONVERTER_SW_API_ENABLE **and** DEF_ENCODER_VIDEO_AUDIO_API_ENABLE as well to use screen recorder.
-#define DEF_SEM_ENABLE_SCREEN_RECORDER		/*(bool)(*/false/*)*/
-//You need to enable DEF_HTTPC_API_ENABLE **or** DEF_CURL_API_ENABLE as well to use updater.
-#define DEF_SEM_ENABLE_UPDATER				/*(bool)(*/true/*)*/
+/* 在线更新 / 录屏：工程内无对应实现；勿再保留易误导的 URL 或「已开启」宏。 */
+#define DEF_SEM_ENABLE_UPDATER				/*(bool)(*/false/*)*/
 
 typedef struct
 {
@@ -83,17 +79,11 @@ typedef struct
 	char connected_wifi[33];		//Connected network (access point) name (empty string if not connected).
 	char msg[128];					//Preformatted status message.
 	Sem_wifi_signal wifi_signal;	//Wifi signal strength and whether connected to the Internet.
-	Sem_model console_model;		//Console model ID.
+	Sem_model console_model;		/* N3DS 档=探测到 4 核可用，否则 O3DS 档（非 CFG） */
 	Sem_time time;					//The time.
 } Sem_state;
 
 bool Sem_query_init_flag(void);
-
-bool Sem_query_running_flag(void);
-
-void Sem_resume(void);
-
-void Sem_suspend(void);
 
 void Sem_get_config(Sem_config* config);
 
@@ -101,7 +91,7 @@ void Sem_set_config(Sem_config* new_config);
 
 void Sem_get_state(Sem_state* state);
 
-/** Fake model override: 255 = off (use real hardware), 0 = O3DS, 1 = N3DS. */
+/** Fake model: 255=off（按 CPU 可用核数：4→N3DS 档否则 O3DS 档），0/1=强制 O/N 档。 */
 uint8_t Sem_query_fake_model(void);
 void Sem_set_fake_model(uint8_t fake_model);
 

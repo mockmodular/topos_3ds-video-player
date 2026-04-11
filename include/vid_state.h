@@ -25,6 +25,8 @@
 
 #define SEEK_IGNORE_PACKETS							(uint8_t)(5)
 #define SEEK_BACKWARD_TIMEOUT						(uint8_t)(20)
+/* seek_start_pos_after_jump: unset until demux time is anchored (decode seek state); valid anchors are >= 0 ms */
+#define VID_SEEK_JUMP_ANCHOR_UNSET					(-1.0)
 
 #define RAM_TO_KEEP_BASE							(uint32_t)(1000 * 1000 * 6)
 #define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(48)
@@ -58,9 +60,7 @@
 #define VID_FS_BROWSER_ROOT_MOVIE					(uint8_t)(0)
 #define VID_FS_BROWSER_ROOT_TF						(uint8_t)(1)
 
-#define DEBUG_GRAPH_ELEMENTS						(uint16_t)(320)
-#define DEBUG_GRAPH_WIDTH							(uint16_t)(320)
-#define DEBUG_GRAPH_AVG_SAMPLES						(uint16_t)(90)
+/* Dav1d / frame-worker: registered decode job handles (see frame_worker_thread_* in vid_worker.c). */
 #define DEBUG_GRAPH_TEMP_ELEMENTS					(uint16_t)(32)
 
 #define QUEUE_OP_TIMEOUT_US							(uint64_t)(DEF_UTIL_MS_TO_US(100))
@@ -168,37 +168,6 @@ typedef enum
 
 typedef enum
 {
-	MSG_TEX_FILTER,
-	MSG_SKIP_FRAME,
-	MSG_AUDIO_TRACK_DESCRIPTION,
-	MSG_AUDIO_TRACK,
-	MSG_FULL_SCREEN,
-	MSG_HW_DECODER,
-	MSG_HW_CONVERTER,
-	MSG_MULTI_THREAD,
-	MSG_SKIP_KEY_FRAME,
-	MSG_LOWER_RESOLUTION,
-	MSG_SEEKING,
-	MSG_SEEK,
-	MSG_VOLUME,
-	MSG_ASPECT_RATIO,
-	MSG_REMEMBER_POS,
-	MSG_PLAY_METHOD,
-	MSG_NO_REPEAT,
-	MSG_REPEAT,
-	MSG_IN_ORDER,
-	MSG_RANDOM,
-	MSG_DISABLE_AUDIO,
-	MSG_DISABLE_VIDEO,
-	MSG_RESTART_PLAYBACK_THRESHOLD,
-	MSG_PROCESSING_VIDEO,
-	MSG_NUM_OF_THREADS,
-
-	MSG_MAX,
-} Vid_msg;
-
-typedef enum
-{
 	SCREEN_POS_TOP_LEFT,
 	SCREEN_POS_TOP_RIGHT,
 	SCREEN_POS_BOTTOM,
@@ -255,7 +224,6 @@ typedef struct
 
 	//Settings (can be changed while playing videos).
 	bool auto_dim_5s;
-	bool remember_video_pos;
 	uint8_t fs_browser_root_mode;	/* VID_FS_BROWSER_ROOT_MOVIE or VID_FS_BROWSER_ROOT_TF */
 	bool    ui_mod;			/* true = full bottom-screen info (codec/cpu/fps/thumb…); false = progress+time+seek+chrome buttons only */
 	uint8_t texture_filter_mode;	/* VID_TEX_FILTER_BILINEAR / NEAREST / AUTO */
@@ -268,7 +236,6 @@ typedef struct
 	bool disable_video;
 	bool use_hw_decoding;
 	uint8_t use_hw_color_conversion;	//VID_HW_CONV_CPU/Y2R_X2/NEON_Y2R
-	uint8_t mvd_upload_mode;			/* Always VID_MVD_UPLOAD_UNROLL4 (no longer user-selectable) */
 	bool use_multi_threaded_decoding;
 	bool is_sbs_3d;
 	bool sbs_swap_eyes;
@@ -278,30 +245,9 @@ typedef struct
 	uint32_t ram_to_keep_base;
 	Media_thread_type thread_mode;
 
-	//Debug view.
-	bool show_decoding_graph;
-	/* show_color_conversion_graph 已禁用（相关逻辑已注释） */
-	bool show_packet_buffer_graph;
-	bool show_raw_video_buffer_graph;
-	bool show_raw_audio_buffer_graph;
-	uint32_t total_frames;
-	uint32_t total_rendered_frames;
+	/* 100 ms housekeeping (buffer %, seek bar); not decode-time graphs. */
 	uint64_t previous_ts;
-	double decoding_min_time;
-	double decoding_max_time;
-	double decoding_total_time;
-	double audio_decoding_avg_time;
-	double video_decoding_avg_time;
-	/* double conversion_avg_time; — 色彩转换统计已禁用 */
-	bool keyframe_list[DEBUG_GRAPH_ELEMENTS];
-	uint16_t packet_buffer_list[DEBUG_GRAPH_ELEMENTS];
-	uint16_t raw_video_buffer_list[EYE_MAX][DEBUG_GRAPH_ELEMENTS];
-	uint32_t raw_audio_buffer_list[DEBUG_GRAPH_ELEMENTS];
-	double video_decoding_time_list[DEBUG_GRAPH_ELEMENTS];
-	double audio_decoding_time_list[DEBUG_GRAPH_ELEMENTS];
-	/* double conversion_time_list[DEBUG_GRAPH_ELEMENTS]; — 色彩转换统计已禁用 */
 	const void* frame_list[DEBUG_GRAPH_TEMP_ELEMENTS];
-	TickCounter decoding_time_tick[DEBUG_GRAPH_TEMP_ELEMENTS];
 
 	//A/V desync management.
 	uint64_t wait_threshold_exceeded_ts[EYE_MAX];
@@ -320,7 +266,10 @@ typedef struct
 	double seek_pos_cache;
 	double seek_pos;
 	double seek_start_pos_after_jump;
-	double seek_progress;
+
+	/* 文件列表连续打开：合并为一条 PLAY，仅保留最后一次 malloc 的 Vid_file（解码线程取走）。 */
+	Vid_file *play_request_pending;
+	Sync_data play_request_pending_lock;
 
 	//Video.
 	uint8_t num_of_video_tracks;
@@ -336,10 +285,11 @@ typedef struct
 	double video_y_offset[EYE_MAX];
 	double video_zoom[EYE_MAX];
 	double video_current_pos[EYE_MAX];
+	/* Decoder PTS (ms) for each ring slot / eye; -1 = unknown (use legacy A/V estimate). */
+	double video_buffer_pts[VIDEO_BUFFERS][EYE_MAX];
 	Media_v_info video_info[EYE_MAX];
 	Large_image large_image[VIDEO_BUFFERS][EYE_MAX];
 	uint8_t* sbs_right_buf;
-	uint8_t* mvd_stage[2];			//DMA staging buffers (linearAlloc, one per eye)
 
 	//Audio.
 	uint8_t num_of_audio_tracks;
@@ -391,6 +341,5 @@ typedef struct
 
 //Globals (defined in video_player.c).
 extern Vid_player vid_player;
-extern Str_data vid_msg[MSG_MAX];
 
 #endif //!defined(DEF_VID_STATE_HPP)

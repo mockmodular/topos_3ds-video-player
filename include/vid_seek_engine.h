@@ -10,7 +10,6 @@ typedef struct
 {
 	double	display_pos_ms;	//Position the bar indicator should show.
 	double	duration_ms;
-	double	seek_progress;	//0.0-100.0; only meaningful when is_seeking == true.
 	bool	is_seeking;		//PLAYER_STATE_SEEKING or PLAYER_STATE_PREPARE_SEEKING.
 	bool	is_drag_active;	//User is currently dragging the seek bar.
 } VidSeekEngineView;

@@ -15,10 +15,8 @@
 #include <libavutil/cpu.h>
 
 #include "system/draw/draw.h"
-#include "system/menu.h"
 #include "system/sem.h"
 #include "system/util/converter.h"
-#include "system/util/cpu_usage.h"
 #include "system/util/err.h"
 #include "system/util/hw_config.h"
 #include "system/util/log.h"
@@ -269,9 +267,6 @@ void Vid_main(void)
 
 	if(Util_err_query_show_flag())
 		watch_handle_bit |= DEF_WATCH_HANDLE_BIT_ERR;
-	/* 屏上日志已禁用（原 Util_log_query_show_flag） */
-	/* if(Util_log_query_show_flag())
-		watch_handle_bit |= DEF_WATCH_HANDLE_BIT_LOG; */
 
 	Vid_control_full_screen();
 
@@ -306,28 +301,21 @@ void Vid_main(void)
 
 			if(Util_str_has_data(&top_center_msg))
 			{
-				Draw_with_background(&top_center_msg, 0, 20, 0.45, 0.45, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_CENTER,
+				Draw_with_background(&top_center_msg, 0, 20, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_CENTER,
 				400, 30, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 			}
 
 			if(Util_str_has_data(&bottom_left_msg))
 			{
-				Draw_with_background(&bottom_left_msg, 0, 200, 0.45, 0.45, DEF_DRAW_WHITE, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_BOTTOM,
+				Draw_with_background(&bottom_left_msg, 0, 200, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_BOTTOM,
 				400, 40, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 			}
 
 			if(Util_str_has_data(&bottom_center_msg))
 			{
-				Draw_with_background(&bottom_center_msg, 0, 200, 0.5, 0.5, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_BOTTOM,
+				Draw_with_background(&bottom_center_msg, 0, 200, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_BOTTOM,
 				400, 40, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 			}
-
-			/* Debug 模式 UI 已移除 */
-			/* if(config.is_debug)
-				Draw_debug_info(config.is_night, state.free_ram, state.free_linear_ram); */
-
-			/* if(Util_log_query_show_flag())
-				Util_log_draw(); */
 
 			if(Draw_is_3d_mode())
 			{
@@ -358,27 +346,22 @@ void Vid_main(void)
 
 				if(Util_str_has_data(&top_center_msg))
 				{
-					Draw_with_background(&top_center_msg, 0, 20, 0.45, 0.45, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_CENTER,
+					Draw_with_background(&top_center_msg, 0, 20, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_CENTER,
 					400, 30, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 				}
 
 				if(Util_str_has_data(&bottom_left_msg))
 				{
-					Draw_with_background(&bottom_left_msg, 0, 200, 0.45, 0.45, DEF_DRAW_WHITE, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_BOTTOM,
+					Draw_with_background(&bottom_left_msg, 0, 200, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_LEFT, DRAW_Y_ALIGN_BOTTOM,
 					400, 40, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 				}
 
 				if(Util_str_has_data(&bottom_center_msg))
 				{
-					Draw_with_background(&bottom_center_msg, 0, 200, 0.5, 0.5, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_BOTTOM,
+					Draw_with_background(&bottom_center_msg, 0, 200, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_WHITE, DRAW_X_ALIGN_CENTER, DRAW_Y_ALIGN_BOTTOM,
 					400, 40, DRAW_BACKGROUND_UNDER_TEXT, &background, 0xA0000000);
 				}
 
-				/* if(config.is_debug)
-					Draw_debug_info(config.is_night, state.free_ram, state.free_linear_ram); */
-
-				/* if(Util_log_query_show_flag())
-					Util_log_draw(); */
 			}
 
 			Util_str_free(&top_center_msg);

@@ -17,19 +17,58 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include <malloc.h>
 #include <time.h>
 
-#include "system/menu.h"
 #include "system/sem.h"
 #include "system/util/converter.h"
 #include "system/util/err.h"
-#include "system/util/file.h"
 #include "system/util/hid.h"
 #include "system/util/log.h"
 #include "system/util/speaker.h"
+#include "system/util/sync.h"
 #include "system/util/watch.h"
 
 //Defines (reference vid_player directly, cannot move to vid_state.h).
 #define HW_DECODER_RAW_IMAGE_SIZE				(uint32_t)(vid_player.video_info[EYE_LEFT].width * vid_player.video_info[EYE_LEFT].height * 4)
 #define SW_DECODER_RAW_IMAGE_SIZE(index)		(uint32_t)(vid_player.video_info[index].width * vid_player.video_info[index].height * 1.5)
+
+/* fake_model off(255) 且 console_model 为「四核探测下的 O3DS 档」：永不尝试 MVD。
+ * fake 强制 O3DS(0)/N3DS(1) 时仍按 use_hw_decoding 尝试 MVD（新机上模拟老机等）。 */
+static bool vid_decode_mvd_blocked_real_o3ds_fake_off(void)
+{
+	uint8_t fm = Sem_query_fake_model();
+	if (fm < (uint8_t)DEF_SEM_MODEL_MAX)
+		return false;
+	{
+		Sem_state st = { 0, };
+		Sem_get_state(&st);
+		return !DEF_SEM_MODEL_IS_NEW(st.console_model);
+	}
+}
+
+/* Refresh seek_start_pos_out, flags, speaker, audio flush, and queue demux seek for current vid_player.seek_pos. */
+static void decode_thread_issue_demux_seek(double *seek_start_pos_out)
+{
+	uint32_t result = DEF_ERR_OTHER;
+
+	*seek_start_pos_out = vid_player.media_current_pos;
+	vid_player.seek_start_pos_after_jump = VID_SEEK_JUMP_ANCHOR_UNSET;
+
+	if((*seek_start_pos_out) > vid_player.seek_pos)
+		vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state | PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
+	else
+		vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
+
+	Util_speaker_clear_buffer(DEF_VID_SPEAKER_SESSION_ID);
+
+	if(vid_player.num_of_audio_tracks > 0)
+	{
+		DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.audio_decode_thread_command_queue, AUDIO_DECODE_THREAD_SEEK_REQUEST,
+		NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_SEND_TO_FRONT), (result == DEF_SUCCESS), result);
+	}
+
+	/* One pending demux seek: handler uses current vid_player.seek_pos when it runs. */
+	DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.read_packet_thread_command_queue, READ_PACKET_THREAD_SEEK_REQUEST,
+	NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
+}
 
 void Vid_decode_thread(void* arg)
 {
@@ -42,15 +81,9 @@ void Vid_decode_thread(void* arg)
 	bool is_waiting_video_decoder = false;
 	uint8_t backward_timeout = SEEK_BACKWARD_TIMEOUT;
 	uint8_t wait_count = SEEK_IGNORE_PACKETS;
-	uint8_t dummy = 0;
 	uint32_t result = 0;
 	uint32_t audio_bar_pos = 0;
 	double seek_start_pos = 0;
-	Str_data cache_file_name = { 0, };
-
-	Util_file_save_to_file(".", DEF_MENU_MAIN_DIR "saved_pos/", &dummy, 1, true);//Create directory.
-	Util_str_init(&cache_file_name);
-
 	while (vid_player.thread_run)
 	{
 		uint64_t timeout_us = DEF_THREAD_ACTIVE_SLEEP_TIME;
@@ -81,6 +114,18 @@ void Vid_decode_thread(void* arg)
 				case DECODE_THREAD_PLAY_REQUEST:
 				{
 					Vid_file* new_file = (Vid_file*)message;
+
+					if(!new_file)
+					{
+						Util_sync_lock(&vid_player.play_request_pending_lock, UINT64_MAX);
+						new_file = vid_player.play_request_pending;
+						vid_player.play_request_pending = NULL;
+						Util_sync_unlock(&vid_player.play_request_pending_lock);
+					}
+
+					if(!new_file && !(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING))
+						break;
+
 					bool switch_player_panel_from_files_open = false;
 
 					if(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING)
@@ -127,24 +172,7 @@ void Vid_decode_thread(void* arg)
 						wait_count = SEEK_IGNORE_PACKETS;
 						audio_bar_pos = 0;
 						seek_start_pos = 0;
-						Util_str_clear(&cache_file_name);
 					DEF_LOG_FORMAT("decoder open path=[%s]", DEF_STR_NEVER_NULL(&path));
-
-					//Generate cache file name.
-						if(Util_str_has_data(&path))
-						{
-							for(uint32_t i = 0; i < path.length; i++)
-							{
-								//Replace "/" with "_".
-								if(path.buffer[i] == '/')
-									Util_str_add(&cache_file_name, "_");
-								else
-								{
-									char temp_char[2] = { path.buffer[i], 0, };
-									Util_str_add(&cache_file_name, temp_char);
-								}
-							}
-						}
 
 					DEF_LOG_RESULT_SMART(result, Util_decoder_open_file(path.buffer, &num_of_audio_tracks, &num_of_video_tracks, DEF_VID_DECORDER_SESSION_ID), (result == DEF_SUCCESS), result);
 
@@ -262,16 +290,16 @@ void Vid_decode_thread(void* arg)
 							}
 
 								//Hardware decoder only supports 1 track at a time.
-								if(num_of_video_tracks == 1 && vid_player.use_hw_decoding && vid_player.video_info[EYE_LEFT].pixel_format == RAW_PIXEL_YUV420P
+								if(num_of_video_tracks == 1 && vid_player.use_hw_decoding
+								&& !vid_decode_mvd_blocked_real_o3ds_fake_off()
+								&& vid_player.video_info[EYE_LEFT].pixel_format == RAW_PIXEL_YUV420P
 								&& strcmp(vid_player.video_info[EYE_LEFT].format_name, "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10") == 0)
 								{
-									//We can use hw decoding for this video.
+									/* 先置位再 init：mvdstd 失败（如 O3DS 无可用 MVD）时清位并走软解，不整文件失败 */
 									vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state | PLAYER_SUB_STATE_HW_DECODING);
 									DEF_LOG_RESULT_SMART(result, Util_decoder_mvd_init(DEF_VID_DECORDER_SESSION_ID), (result == DEF_SUCCESS), result);
 									if(result != DEF_SUCCESS)
-									{
-										goto error;
-									}
+										vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_HW_DECODING);
 								}
 
 								if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) && vid_player.use_hw_color_conversion)
@@ -358,29 +386,6 @@ void Vid_decode_thread(void* arg)
 							}
 						}
 
-						//Allocate DMA staging buffers (for VID_MVD_UPLOAD_DMA mode).
-						//Size = texture power-of-2 dimensions, one per eye.
-						if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
-						{
-							C3D_Tex* l_tex0 = vid_player.large_image[0][EYE_LEFT].images[0].c2d.tex;
-							uint32_t stage_sz = (uint32_t)l_tex0->width * (uint32_t)l_tex0->height * 4u;
-							vid_player.mvd_stage[EYE_LEFT] = (uint8_t*)linearAlloc(stage_sz);
-							if(!vid_player.mvd_stage[EYE_LEFT])
-							{
-								DEF_LOG_STRING("Couldn't allocate mvd_stage[LEFT], DMA mode unavailable.");
-							}
-							if(vid_player.is_sbs_3d)
-							{
-								C3D_Tex* r_tex0 = vid_player.large_image[0][EYE_RIGHT].images[0].c2d.tex;
-								uint32_t stage_sz_r = (uint32_t)r_tex0->width * (uint32_t)r_tex0->height * 4u;
-								vid_player.mvd_stage[EYE_RIGHT] = (uint8_t*)linearAlloc(stage_sz_r);
-								if(!vid_player.mvd_stage[EYE_RIGHT])
-								{
-									DEF_LOG_STRING("Couldn't allocate mvd_stage[RIGHT], DMA mode unavailable.");
-								}
-							}
-						}
-
 						{
 							APT_SetAppCpuTimeLimit(80);
 						}
@@ -431,28 +436,6 @@ void Vid_decode_thread(void* arg)
 							Vid_exit_full_screen();
 							//Reset key state on scene change.
 							Util_hid_reset_key_state(HID_KEY_BIT_ALL);
-						}
-
-						//If remember video pos is set, try to find previous playback position.
-						if(vid_player.remember_video_pos)
-						{
-							uint8_t* saved_data = NULL;
-							uint32_t read_size = 0;
-
-							result = Util_file_load_from_file(cache_file_name.buffer, DEF_MENU_MAIN_DIR "saved_pos/", &saved_data, sizeof(double), 0, &read_size);
-							if(result == DEF_SUCCESS && read_size >= sizeof(double))
-							{
-								double saved_pos = *(double*)saved_data;
-								if(saved_pos > 0 && saved_pos < vid_player.media_duration)
-								{
-									vid_player.seek_pos = saved_pos;
-									DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_SEEK_REQUEST,
-									NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
-								}
-							}
-
-							free(saved_data);
-							saved_data = NULL;
 						}
 
 						//If we have normal videos, buffer some data before starting/resuming playback.
@@ -575,12 +558,11 @@ void Vid_decode_thread(void* arg)
 
 					if(vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
 					{
-						//Currently threre is on going seek request, retry later.
-						//Add seek request if threre is no another seek request.
-						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_SEEK_REQUEST,
-						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
-
-						Util_sleep(1000);
+						/* Latest target is already in vid_player.seek_pos (UI sets before each request).
+						 * Re-arm demux/audio instead of re-queueing this command and sleeping. */
+						is_eof = false;
+						natural_eof_session_held = false;
+						decode_thread_issue_demux_seek(&seek_start_pos);
 						break;
 					}
 
@@ -592,35 +574,10 @@ void Vid_decode_thread(void* arg)
 					else if(vid_player.state == PLAYER_STATE_PAUSE)//Remove resume later bit.
 						vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_RESUME_LATER);
 
-					//Handle seek request.
 					vid_player.state = PLAYER_STATE_PREPARE_SEEKING;
-					seek_start_pos = vid_player.media_current_pos;
-					vid_player.seek_start_pos_after_jump = INT32_MIN;
-
-					if(seek_start_pos > vid_player.seek_pos)//Add seek backward wait bit.
-						vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state | PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
-					else//Remove seek backward wait bit.
-						vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
-
-				Util_speaker_clear_buffer(DEF_VID_SPEAKER_SESSION_ID);
-
-				//Flush stale audio from audio decode thread before seeking (fire-and-forget).
-				//Use SEND_TO_FRONT so audio thread prioritizes this over queued decode requests.
-				//No wait here: blocking for a notification would consume other threads' notifications
-				//from decode_thread_notification_queue and break the seek state machine.
-				if(vid_player.num_of_audio_tracks > 0)
-				{
-					DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.audio_decode_thread_command_queue, AUDIO_DECODE_THREAD_SEEK_REQUEST,
-					NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_SEND_TO_FRONT), (result == DEF_SUCCESS), result);
-				}
-
-				//Reset EOF flag.
-				is_eof = false;
-				natural_eof_session_held = false;
-
-				//Seek the video.
-				DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.read_packet_thread_command_queue, READ_PACKET_THREAD_SEEK_REQUEST,
-				NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
+					is_eof = false;
+					natural_eof_session_held = false;
+					decode_thread_issue_demux_seek(&seek_start_pos);
 
 					break;
 				}
@@ -630,9 +587,6 @@ void Vid_decode_thread(void* arg)
 					/* 播放到末尾：不关文件、不释放纹理，保持文件名与时长，便于拖条重定位；按 B 的 ABORT 才彻底退出 */
 					if(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING)
 						break;
-
-					if(vid_player.remember_video_pos)
-						Util_file_delete_file(cache_file_name.buffer, DEF_MENU_MAIN_DIR "saved_pos/");
 
 					if(vid_player.num_of_audio_tracks > 0)
 						Util_speaker_pause(DEF_VID_SPEAKER_SESSION_ID);
@@ -670,18 +624,6 @@ void Vid_decode_thread(void* arg)
 						}
 
 						break;
-					}
-
-					if(vid_player.remember_video_pos)
-					{
-						double saved_pos = vid_player.media_current_pos;
-						Str_data time = { 0, };
-
-						if(Util_convert_seconds_to_time(DEF_UTIL_MS_TO_S_D(saved_pos), &time) == DEF_SUCCESS)
-							DEF_LOG_FORMAT("last pos : %s", time.buffer);
-
-						Util_file_save_to_file(cache_file_name.buffer, DEF_MENU_MAIN_DIR "saved_pos/", (uint8_t*)(&saved_pos), sizeof(double), true);
-						Util_str_free(&time);
 					}
 
 					//Wait for read packet thread (also flush queues).
@@ -745,10 +687,9 @@ void Vid_decode_thread(void* arg)
 
 		linearFree(vid_player.sbs_right_buf);
 		vid_player.sbs_right_buf = NULL;
-		linearFree(vid_player.mvd_stage[EYE_LEFT]);
-		vid_player.mvd_stage[EYE_LEFT] = NULL;
-		linearFree(vid_player.mvd_stage[EYE_RIGHT]);
-		vid_player.mvd_stage[EYE_RIGHT] = NULL;
+
+			Vid_init_video_data();
+			Vid_init_audio_data();
 
 			if(!Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
 						Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &audio_bar_pos);
@@ -833,15 +774,8 @@ void Vid_decode_thread(void* arg)
 
 					if(vid_player.num_of_video_tracks == 0)
 					{
-						uint8_t num_of_threads = 0;
-
-						for(uint8_t i = 0; i < vid_player.num_of_video_tracks; i++)
-							num_of_threads = Util_max(num_of_threads, ((vid_player.video_info[i].thread_type == MEDIA_THREAD_TYPE_FRAME) ? vid_player.num_of_threads : 0));
-
-						//If there are no video tracks, start seeking.
-						//Sometimes library caches previous packets even after clearing it, so ignore
-						//first SEEK_IGNORE_PACKETS (+ num_of_threads if frame threading is used) packets.
-						wait_count = (SEEK_IGNORE_PACKETS + num_of_threads);
+						/* Audio-only (or no video): no frame threads — same as old loop with count 0. */
+						wait_count = SEEK_IGNORE_PACKETS;
 						backward_timeout = SEEK_BACKWARD_TIMEOUT;
 						vid_player.state = PLAYER_STATE_SEEKING;
 					}
@@ -849,7 +783,7 @@ void Vid_decode_thread(void* arg)
 					{
 						//If there are video tracks, clear the video cache first.
 						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_video_thread_command_queue, DECODE_VIDEO_THREAD_CLEAR_CACHE_REQUEST,
-						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
+						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 					}
 
 					break;
@@ -944,9 +878,15 @@ void Vid_decode_thread(void* arg)
 								Media_thread_type req_type = (vid_player.use_multi_threaded_decoding ? vid_player.thread_mode : MEDIA_THREAD_TYPE_NONE);
 								num_video = (uint8_t)Util_min(num_video, EYE_MAX);
 								Util_decoder_video_init(0, num_video, req_threads, req_type, DEF_VID_DECORDER_SESSION_ID);
-								if(use_hw)
-									Util_decoder_mvd_init(DEF_VID_DECORDER_SESSION_ID);
-								else if(use_hw_conv)
+								if(use_hw && !vid_decode_mvd_blocked_real_o3ds_fake_off())
+								{
+									uint32_t mvd_r = Util_decoder_mvd_init(DEF_VID_DECORDER_SESSION_ID);
+									if(mvd_r != DEF_SUCCESS)
+										vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_HW_DECODING);
+								}
+								else if(use_hw && vid_decode_mvd_blocked_real_o3ds_fake_off())
+									vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_HW_DECODING);
+								if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) && use_hw_conv)
 									Util_converter_y2r_init();
 							}
 
@@ -1157,11 +1097,11 @@ void Vid_decode_thread(void* arg)
 					{
 						vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);//Remove seek backward wait bit.
 
-						if(vid_player.seek_start_pos_after_jump < 0)
+						if(vid_player.seek_start_pos_after_jump == VID_SEEK_JUMP_ANCHOR_UNSET)
 							vid_player.seek_start_pos_after_jump = vid_player.media_current_pos;//We've jumped behing destination.
 					}
 				}
-				else if(vid_player.seek_start_pos_after_jump < 0 && wait_count == 0)
+				else if(vid_player.seek_start_pos_after_jump == VID_SEEK_JUMP_ANCHOR_UNSET && wait_count == 0)
 					vid_player.seek_start_pos_after_jump = vid_player.media_current_pos;//We've jumped.
 
 				if(!(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT) && vid_player.media_current_pos >= vid_player.seek_pos)
@@ -1214,15 +1154,8 @@ void Vid_decode_thread(void* arg)
 					uint8_t* audio = NULL;
 					uint32_t audio_samples = 0;
 					double pos = 0;
-					TickCounter counter = { 0, };
 
-						osTickCounterStart(&counter);
 						result = Util_decoder_audio_decode(&audio_samples, &audio, &pos, packet_index, DEF_VID_DECORDER_SESSION_ID);
-						osTickCounterUpdate(&counter);
-						vid_player.audio_decoding_time_list[(DEBUG_GRAPH_ELEMENTS - 1)] = osTickCounterRead(&counter);
-
-						for(uint16_t i = 1; i < DEBUG_GRAPH_ELEMENTS; i++)
-							vid_player.audio_decoding_time_list[i - 1] = vid_player.audio_decoding_time_list[i];
 
 					if(result == DEF_SUCCESS)
 					{
@@ -1297,8 +1230,6 @@ void Vid_decode_thread(void* arg)
 		else
 			Util_sleep(1000);
 	}
-
-	Util_str_free(&cache_file_name);
 
 	DEF_LOG_STRING("Thread exit.");
 	threadExit(0);

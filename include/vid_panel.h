@@ -43,6 +43,7 @@ void Vid_panel_go_files(void);
 void Vid_panel_go_player(void);
 void Vid_panel_go_settings(void);
 void Vid_panel_leave_settings(void);
+void Vid_panel_toggle_player_files(void);
 void Vid_panel_back(void);
 
 /* After Vid_load_settings(): set file browser path to effective root (movie or sdmc:/). */
@@ -67,7 +68,7 @@ void Vid_panel_settings_kbd_nav(int delta);     /* 上(-1)/下(+1) 移动选中�
 void Vid_panel_settings_kbd_adjust(int delta);  /* 左(-1)/右(+1) 修改当前行的值 */
 void Vid_panel_settings_kbd_submenu_a(void);    /* A：仅打开子菜单，不改选项值 */
 
-/* ── 快速菜单覆盖层（绘制在 Player 面板现有 UI 之上） ── */
+/* ── Lawvere 信息覆盖层（仅设置面板） ── */
 void Vid_panel_toggle_quick_menu(void);
 void Vid_panel_draw_overlay(void);
 

@@ -18,7 +18,7 @@
 //Variables.
 //N/A.
 
-//Code.
+/* 入口极薄：应用生命周期在 system/menu.c（初始化 + 每帧 Vid_main）。 */
 int main(void)
 {
 	Menu_init();

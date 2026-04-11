@@ -27,6 +27,11 @@
 #define DEF_DRAW_WEAK_YELLOW				(uint32_t)(0x5000C5FF)
 #define DEF_DRAW_NO_COLOR					(uint32_t)(0x00000000)
 
+/* 经 Draw / Draw_c / Draw_align / Draw_with_background 传入的统一字号（draw.c 内再 ×1.2 交给 C2D）。 */
+#define DEF_DRAW_TEXT_SCALE					(0.30f)
+/* 不经 Draw、直接 C2D_DrawText 时与上式在 draw.c 中效果一致（×1.2）。 */
+#define DEF_DRAW_TEXT_C2D_SCALE				(DEF_DRAW_TEXT_SCALE * 1.2f)
+
 typedef enum
 {
 	DRAW_SCREEN_INVALID	= -1,

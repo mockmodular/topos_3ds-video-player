@@ -1,6 +1,5 @@
 #if !defined(DEF_CPU_USAGE_H)
 #define DEF_CPU_USAGE_H
-#include <stdbool.h>
 #include <stdint.h>
 #include <math.h>
 #include "system/util/cpu_usage_types.h"
@@ -38,38 +37,12 @@ float Util_cpu_usage_get_cpu_usage(int8_t core_id);
 */
 uint8_t Util_cpu_usage_get_core_1_limit(void);
 
-/**
- * @brief Query CPU usage show flag.
- * Always return false if CPU usage API is not initialized.
- * @return Internal CPU usage show flag.
- * @warning Thread dangerous (untested).
-*/
-bool Util_cpu_usage_query_show_flag(void);
-
-/**
- * @brief Set CPU usage show flag.
- * Do nothing if CPU usage API is not initialized.
- * @param flag (in) When true, internal CPU usage show flag will be set to true otherwise set to false.
- * @warning Thread dangerous (untested).
-*/
-void Util_cpu_usage_set_show_flag(bool flag);
-
-/**
- * @brief Draw CPU usage.
- * @warning Thread dangerous (untested).
- * @warning Call it only from rendering thread.
-*/
-void Util_cpu_usage_draw(void);
-
 #else
 
 #define Util_cpu_usage_init() DEF_ERR_DISABLED
 #define Util_cpu_usage_exit()
 #define Util_cpu_usage_get_cpu_usage(...) NAN
 #define Util_cpu_usage_get_core_1_limit() 0
-#define Util_cpu_usage_query_show_flag() false
-#define Util_cpu_usage_set_show_flag(...)
-#define Util_cpu_usage_draw()
 
 #endif //DEF_CPU_USAGE_API_ENABLE
 
