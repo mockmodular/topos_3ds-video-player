@@ -110,4 +110,95 @@ build.bat   (double-click from project root)
 ```
 
 
-There have been so many changes and simplifications that I can no longer keep track of them all.
+Releasing topos, a heavily modified fork of Core-2-Extreme's Video_player_for_3DS. After fixing more bugs than I care to count and pushing the hardware about as far as I think it can go, it's ready to share.
+https://github.com/mockmodular/topos_3ds-video-player/releases/tag/v0.11.0
+https://github.com/mockmodular/topos_3ds-video-player/tree/v0.11.0
+What's included in the release
+FFmpeg encoding scripts — the best settings I've found for encoding SBS video for 3DS, for both H.264 and MPEG-2. Drop your SBS source in and get a file that plays correctly on both N3DS and O3DS. Also included in the release as ready-to-run .bat files.
+
+
+**H.264 (New 3DS)**
+```bat
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" ^
+-filter_complex "[0:v]scale=iw*sar:ih,setsar=1,split[L][R];
+[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];
+[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];
+[Lc][Rc]hstack[Vs];
+[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" ^
+-map "[V]" -map "0:a?" ^
+-c:v libx264 -preset slow -crf 14 -profile:v high -level 3.1 -fps_mode cfr ^
+-x264-params "aq-mode=3:aq-strength=1.0:qcomp=0.65:ref=4:bframes=4:no-fast-pskip=1" ^
+-color_primaries bt709 -color_trc bt709 -colorspace bt709 ^
+-c:a aac -b:a 128k -ac 2 -ar 48000 "%FILE_OUT%"
+```
+
+**MPEG-2 (Old 3DS)**
+```bat
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" ^
+-filter_complex "[0:v]split[L][R];
+[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];
+[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];
+[Lc][Rc]hstack[Vs];
+[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p[V]" ^
+-map "[V]" -map "0:a?" ^
+-c:v mpeg2video -b:v 2000k -maxrate 2000k -bufsize 4000k ^
+-g 30 -bf 0 -profile:v main -level:v main -fps_mode cfr ^
+-color_primaries bt709 -color_trc bt709 -colorspace bt709 ^
+-c:a mp2 -b:a 96k -ac 2 -ar 48000 "%FILE_OUT%"
+```
+
+
+Both scripts handle SAR correction, aspect-ratio-safe cropping, high-quality spline36 downscaling to 800×240, and proper BT.709 color tagging. The H.264 script targets N3DS MVD hardware decode limits (High profile, Level 3.1). The MPEG-2 script is tuned for O3DS software decode headroom (2000k CBR, no B-frames).
+Test videos — I've encoded the Avatar: Fire and Ash SBS trailer in both H.264 and MPEG-2 at 800×240 and included them in the release. Load them up and you can immediately verify playback on your hardware without needing to source or encode anything yourself.
+
+What it can do
+New 3DS — H.264 SBS 3D at 800×240 @ 24 fps, hardware decoded by the MVD engine. CPU sits near zero during playback. The hardware is doing all the work.
+Old 3DS — MPEG-2 SBS 3D at 800×240 @ 24 fps, software decoded. Runs smooth.
+Both with real parallax barrier 3D, and both at full RGB888 true color — no more RGB565 color banding.
+
+What makes this different
+True SBS 3D that actually works
+SBS content is automatically detected and the frame is split into left/right eye images for the parallax barrier. The detection is simple and reliable — if height == 240 && width >= 640, it's SBS. Right-eye alignment always tracks left-eye geometry perfectly. If you play mono content with the 3D slider turned up, the right eye now correctly mirrors the left instead of going black (a bug in the original).
+Full RGB888 color — everywhere
+The entire render pipeline runs at RGBA8. Top screen, bottom screen, every decode path. The original used RGB565 on the top screen, which shows as color banding on gradients. This fork doesn't have that.
+N3DS: H.264 hardware decode (MVD)
+H.264 files go through the 3DS's built-in MVD hardware decoder. CPU load during H.264 SBS playback is essentially zero — it's the way 3DS video playback was meant to work.
+O3DS: software decode that's actually fast
+A lot of work went into making software decode competitive. FFmpeg was rebuilt from scratch with ARMv6/ARMv5TE hand-written assembly enabled — the original build had --disable-asm, meaning IDCT and motion compensation were running pure C on ARM11 the whole time. Thread affinity is tuned per core: Core 0 is dedicated to FFmpeg decode calls, everything else runs on Core 1. MPEG-2 gets intra-frame SLICE threading across both cores. The result is smooth MPEG-2 SBS at 800×240 @ 24 fps on O3DS.
+Hardware color conversion — zero CPU copy
+For software-decoded YUV420P content, two Y2RU hardware passes write directly into left and right eye texture memory using DMA gap addressing. No CPU memcpy, no per-frame heap allocation. The previous approach was doing ~48 linearAlloc/free calls per second just for this step.
+Runs clean — no slowdown over time
+Seeking fully reopens the decoder instead of just flushing buffers. The original accumulated heap fragmentation during long playback sessions, which caused frame drops that got worse the longer you watched. That's fixed.
+Also fixed: the heap low-memory probe was running ~3,000 times per second (each call doing a test 2.5 MB malloc + free). Now cached. SwsContext was being rebuilt every frame. Now created once. SBS right-eye buffer was being malloc'd and free'd every single frame. Now pre-allocated. These weren't dramatic individually, but stacked up they were quietly eating a lot of cycles.
+Clean interface
+The top screen is always full video. No OSD, no status bar, no UI elements. Everything — file browser, settings, playback info — lives on the bottom screen, and opening the UI never scales or moves the video.
+The interface has been stripped back intentionally. What's here works, and it's not cluttered.
+
+Bugs fixed (partial list)
+
+Right eye showing black when playing mono content with 3D slider on
+SBS right-eye frame misalignment at non-standard resolutions
+Y2R texture corruption caused by DMA stride bug (disabled DMA, fixed upload path)
+SwsContext rebuilt every frame causing unnecessary CPU overhead
+Heap fragmentation causing progressive frame drops during long playback
+Heap probe running thousands of times per second
+Z-fighting / black screen caused by misuse of citro2d Z values (all draw calls unified to 0.5f, draw order controls layering)
+Error overlay not covering file list correctly
+Settings text disappearing near the chrome footer
+CPU usage display rendering off-screen (original was at x=360 on a 320px-wide screen)
+FFmpeg NEON mis-detection crashing ARM11 (ARM11 has no NEON; bare-metal toolchain incorrectly reported it as available)
+receive=EAGAIN from FFmpeg during FRAME threading startup incorrectly treated as an error
+Audio thread blocking on notification queue, consuming other threads' notifications and breaking seek/abort state machine
+
+
+Notes
+
+Requires devkitARM r65 (GCC 14.2.0). r66 / GCC 15.1 causes data abort crashes — this is a known toolchain regression, not a bug in the player.
+English only. Non-English locale files have been removed.
+Some original features are gone: C-Stick video panning, L/R zoom, the Controls help overlay, bottom screen fade-out timer, and the telemetry upload thread.
+This is built around the SBS 3D + clean UI use case. It's not trying to be a universal player.
+
+Source is all on GitHub if you want to dig in. Happy to answer questions.
+
+
+There are also way too many improvements and changes for me to keep track of or remember them all — please everyone test and try it out for yourselves!
