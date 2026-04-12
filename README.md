@@ -1,3 +1,11 @@
+Releasing **topos**, a deep fork of [Core_2_Extreme Video_player_for_3DS](https://github.com/Core-2-Extreme/Video_player_for_3DS). This is not a small-patch fork — almost every core module has been rewritten, simplified, or replaced. The architecture, render pipeline, thread model, and UI have all been redesigned from the ground up. After fixing more bugs than I care to count and pushing the hardware about as far as I think it can go, it's ready to share.
+
+GitHub:
+https://github.com/mockmodular/topos_3ds-video-player/releases/tag/v0.12.0
+https://github.com/mockmodular/topos_3ds-video-player/tree/v0.12.0
+
+
+
 
 ## What's included in the release
 
