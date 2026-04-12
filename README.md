@@ -165,7 +165,7 @@ The 3D video playback quality — especially H.264 SBS 800×240 video on the New
 
 
 
-readme version2
+## readme version2
 
 This project is based on Video_player_for_3DS by Core-2-Extreme. Many thanks to Core-2-Extreme for all their work — they are truly amazing.
 https://github.com/Core-2-Extreme/Video_player_for_3DS
