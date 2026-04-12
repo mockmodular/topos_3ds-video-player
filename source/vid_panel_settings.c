@@ -15,7 +15,7 @@
 
 /* ── Sub-page row tables ────────────────────────────────────────────────
  * ROOT   : volume, custom, video, advanced, ui mod (UI labels all lowercase; acronyms e.g. SW/HW stay caps)
- * CUSTOM : seek step, browse root (movie / SD root), auto dim (5s), eco
+ * CUSTOM : seek step, browse root (movies / SD root), auto dim (5s), eco
  * VIDEO  : 3d or 2d / tex filter / scale / 3d eyes swap
  * ADVANCED: HW decode(auto) / HW color / fake model / multi decode / no audio / no video (MVD upload = Unroll4 fixed)
  * ────────────────────────────────────────────────────────────────────── */
@@ -86,7 +86,7 @@ static const VpSettingRowDesc s_custom_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_FS_BROWSER_ROOT,
         "browse root",
-        2, {"movie", "SD root"}, 0, 0
+        2, {"movies", "SD root"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_AUTO_DIM_5S,

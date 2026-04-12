@@ -46,7 +46,7 @@ void Vid_panel_leave_settings(void);
 void Vid_panel_toggle_player_files(void);
 void Vid_panel_back(void);
 
-/* After Vid_load_settings(): set file browser path to effective root (movie or sdmc:/). */
+/* After Vid_load_settings(): set file browser path to effective root (媒体目录或 sdmc:/)。 */
 void Vid_panel_files_sync_after_settings_load(void);
 /* Call when Custom → 根目录 option changes (clamp path + reload if on FILES). */
 void Vid_panel_files_on_root_mode_changed(void);

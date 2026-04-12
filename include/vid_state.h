@@ -56,7 +56,7 @@
 #define SETTINGS_ELEMENTS_V15						(uint8_t)(28)
 #define SETTINGS_ELEMENTS_NEWEST					(uint8_t)(SETTINGS_ELEMENTS_V15)
 
-/* File browser top level: TF root vs sdmc:/movie (if that folder exists). */
+/* File browser top level: TF root vs sdmc:/movies（若不存在则尝试旧名 sdmc:/movie）。 */
 #define VID_FS_BROWSER_ROOT_MOVIE					(uint8_t)(0)
 #define VID_FS_BROWSER_ROOT_TF						(uint8_t)(1)
 

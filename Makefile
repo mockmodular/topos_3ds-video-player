@@ -40,10 +40,10 @@ GRAPHICS	:=	gfx
 ROMFS		:=	romfs
 GFXBUILD	:=	$(ROMFS)/gfx
 #---------------------------------------------------------------------------------
-# CIA / NCCH -ver：Nintendo 打包格式 major*1024 + minor*16 + micro（0.11.0 -> 176）
-APP_VER				:= 176
+# CIA / NCCH -ver：Nintendo 打包格式 major*1024 + minor*16 + micro（0.12.0 -> 192）
+APP_VER				:= 192
 APP_TITLE			:= topos
-APP_DESCRIPTION		:= topos_video player for 3ds_v0.11
+APP_DESCRIPTION		:= topos_video player for 3ds_v0.12
 # app.rsf SystemControlInfo.RemasterVersion（与语义化 major 一致；勿随意增大以免存档/ExtData 不兼容）
 APP_VERSION_MAJOR	:= 0
 APP_AUTHOR			:= mock

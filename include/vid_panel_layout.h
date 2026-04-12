@@ -46,10 +46,14 @@
  * 经 `Draw_*` 的字号：`DEF_DRAW_TEXT_SCALE`（见 draw_types.h）。
  * 与顶栏 VP_CHROME_TOP_TEXT_LEFT_X 默认同为 6，但是两个独立宏，禁止互相 #define 引用。
  *
- * VP_PLAYER_UI_STATUS_LEFT_X — 仅此一个调节「整块信息区最左一列文案」的屏幕 x；改这里平移 V/A/分辨率/Decode/Lin/CPU 标题与 C0 标签等。
+ * VP_PLAYER_UI_STATUS_LEFT_X — V/A/CPU 等「整行左对齐」的 x；与 HCOL 第 0 列相同。
+ * VP_PLAYER_UI_HCOL_STEP — 同一行内多列时相邻列「左缘–左缘」间距（像素）。
  *
- * 下面为相对屏幕左缘 (x=0) 的钉死列，不参与「最左微调」：中间/右侧固定位置。 */
+ * 行结构：V 单行；A 单行；分辨率+帧率+SBS+3D 一行（列 0–3）；Dec/Tex/SAR/ASM 一行；Lin+Heap 一行；CPU 一行。
+ */
 #define VP_PLAYER_UI_STATUS_LEFT_X        6
+#define VP_PLAYER_UI_HCOL_STEP            80
+#define VP_PLAYER_UI_HCOL_X(n)            ((float)(VP_PLAYER_UI_STATUS_LEFT_X + (n) * (VP_PLAYER_UI_HCOL_STEP)))
 #define VP_PLAYER_UI_STATUS_BAR_X         22
 #define VP_PLAYER_UI_STATUS_PCT_X         290
 /* 叠在 video_x_offset_bottom（解码层给的底屏坐标）上再向右加的像素；与左列、顶栏无公式关系 */
@@ -64,20 +68,19 @@
 #define VP_PLAYER_STATUS_ROW_A_Y        (VP_PLAYER_STATUS_FIRST_Y + 1 * VP_PLAYER_STATUS_LINE_STEP)
 #define VP_PLAYER_STATUS_ROW_RES_Y      (VP_PLAYER_STATUS_FIRST_Y + 2 * VP_PLAYER_STATUS_LINE_STEP)
 #define VP_PLAYER_STATUS_ROW_DEC_Y      (VP_PLAYER_STATUS_FIRST_Y + 3 * VP_PLAYER_STATUS_LINE_STEP)
-#define VP_PLAYER_STATUS_ROW_DEC2_Y     (VP_PLAYER_STATUS_FIRST_Y + 4 * VP_PLAYER_STATUS_LINE_STEP)
-#define VP_PLAYER_STATUS_ROW_DIAG_LIN_Y (VP_PLAYER_STATUS_FIRST_Y + 5 * VP_PLAYER_STATUS_LINE_STEP)
-#define VP_PLAYER_STATUS_ROW_CPUHDR_Y   (VP_PLAYER_STATUS_FIRST_Y + 6 * VP_PLAYER_STATUS_LINE_STEP)
-#define VP_PLAYER_STATUS_BAR0_Y         (VP_PLAYER_STATUS_FIRST_Y + 7 * VP_PLAYER_STATUS_LINE_STEP + (VP_PLAYER_STATUS_BAR_GAP_PRE))
+#define VP_PLAYER_STATUS_ROW_DIAG_LIN_Y (VP_PLAYER_STATUS_FIRST_Y + 4 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_ROW_CPUHDR_Y   (VP_PLAYER_STATUS_FIRST_Y + 5 * VP_PLAYER_STATUS_LINE_STEP)
+#define VP_PLAYER_STATUS_BAR0_Y         (VP_PLAYER_STATUS_FIRST_Y + 6 * VP_PLAYER_STATUS_LINE_STEP + (VP_PLAYER_STATUS_BAR_GAP_PRE))
 #define VP_PLAYER_STATUS_BAR_STRIDE     12
 
-/* 分辨率行：WxH 与 fpsNhz 分两列绘制（fps 的 x 固定，不随分辨率位数变化）；SBS/3D 靠右固定列。 */
-#define VP_PLAYER_UI_STATUS_RES_X       ((float)VP_PLAYER_UI_STATUS_LEFT_X)
-#define VP_PLAYER_UI_STATUS_FPS_X       (78.0f) /* 固定列：避免与常见 WxH 重叠，间距接近旧版 " @" */
-#define VP_PLAYER_UI_RES_SBS_X          214.0f
+/* 分辨率行：列 0=WxH，列 1=fps，列 2=SBS，列 3=3D */
+#define VP_PLAYER_UI_STATUS_RES_X   (VP_PLAYER_UI_HCOL_X(0))
+#define VP_PLAYER_UI_STATUS_FPS_X   (VP_PLAYER_UI_HCOL_X(1))
+#define VP_PLAYER_UI_STATUS_SBS_X   (VP_PLAYER_UI_HCOL_X(2))
+#define VP_PLAYER_UI_STATUS_3D_X    (VP_PLAYER_UI_HCOL_X(3))
 
-/* Lin / Heap：分列；Heap 起 x 须大于「Lin:」+ 合理最大数字宽度。 */
-#define VP_PLAYER_UI_DIAG_LIN_X         ((float)VP_PLAYER_UI_STATUS_LEFT_X)
-#define VP_PLAYER_UI_DIAG_HEAP_X        172.0f
+#define VP_PLAYER_UI_DIAG_LIN_X     (VP_PLAYER_UI_HCOL_X(0))
+#define VP_PLAYER_UI_DIAG_HEAP_X    (VP_PLAYER_UI_HCOL_X(1))
 
 #define VP_SCROLL_THRESH 4
 

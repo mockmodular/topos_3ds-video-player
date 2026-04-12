@@ -20,7 +20,7 @@ typedef struct {
 } FsListing;
 
 int  fs_list(const char *path, FsListing *out);
-/** 1 if path is an existing directory on SDMC (e.g. "sdmc:/movie"). */
+/** 1 if path is an existing directory on SDMC (e.g. "sdmc:/movies"). */
 int  fs_directory_exists(const char *path);
 void fs_path_enter(char *path, const char *dir);
 int  fs_path_up(char *path);

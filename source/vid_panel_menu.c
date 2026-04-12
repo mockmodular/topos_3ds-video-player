@@ -65,17 +65,16 @@ void Vid_panel_player_draw_status(uint32_t color,
 
 	Util_str_init(&format_str);
 
-	// ——— VIDEO codec ————————————————————————————————————————
+	// ——— VIDEO / AUDIO：各占一行，与顶栏一致左对齐 ————————————————————————
 	Util_str_format(&format_str, "V:%-6s",
 		vid_player.video_info[EYE_LEFT].format_name);
-	Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_V_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
+	Draw(&format_str, (float)VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_V_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
-	// ——— AUDIO codec ————————————————————————————————————————
 	Util_str_format(&format_str, "A:%-6s",
 		vid_player.audio_info[0].format_name);
-	Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_A_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
+	Draw(&format_str, (float)VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_A_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
-	// ——— resolution（左）与 fps（固定列）分开绘制；SBS/3D 靠右固定列 —————————
+	// ——— 分辨率、帧率、SBS、3D 同一行；列左缘间距 VP_PLAYER_UI_HCOL_STEP ————————
 	// AV1: show visible width/height (decoder context), not 128-padded codec_*.
 	{
 		const float res_scale = DEF_DRAW_TEXT_SCALE;
@@ -100,12 +99,14 @@ void Vid_panel_player_draw_status(uint32_t color,
 			Draw(&format_str, VP_PLAYER_UI_STATUS_FPS_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, color);
 		}
 
-		Util_str_format(&format_str, "SBS:%d  3D:%d",
-			(int)vid_player.is_sbs_3d, (int)Draw_is_3d_mode());
-		Draw(&format_str, VP_PLAYER_UI_RES_SBS_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, DEF_DRAW_WEAK_WHITE);
+		Util_str_format(&format_str, "SBS:%d", (int)vid_player.is_sbs_3d);
+		Draw(&format_str, VP_PLAYER_UI_STATUS_SBS_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, DEF_DRAW_WEAK_WHITE);
+
+		Util_str_format(&format_str, "3D:%d", (int)Draw_is_3d_mode());
+		Draw(&format_str, VP_PLAYER_UI_STATUS_3D_X, (float)VP_PLAYER_STATUS_ROW_RES_Y, res_scale, res_scale, DEF_DRAW_WEAK_WHITE);
 	}
 
-	// ——— DECODE（两行：解码/纹理一行，SAR/ASM 一行，避免单行过长）——————————————
+	// ——— DECODE：Dec / Tex / SAR / ASM 同一行，列左缘间距 VP_PLAYER_UI_HCOL_STEP ——————————
 	{
 		static int cached_cpu_flags = -1;
 		if(cached_cpu_flags < 0)
@@ -117,21 +118,26 @@ void Vid_panel_player_draw_status(uint32_t color,
 			(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? "MVD/HW" :
 			(vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION) ?
 				(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R ? "NEONy2r" :
-				vid_player.is_sbs_3d ? "Y2Rx2" : "SW/Y2R") : "SW/CPU";
+				vid_player.is_sbs_3d ? "Y2R" : "SW/Y2R") : "SW/CPU";
 		const char* tex_tag =
 			Vid_effective_use_linear_texture_filter(EYE_LEFT) ? "LINEAR" : "NEAR";
 
-		Util_str_format(&format_str, "Dec:%s  Tex:%s", dec_tag, tex_tag);
-		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
+		Util_str_format(&format_str, "Dec:%s", dec_tag);
+		Draw(&format_str, VP_PLAYER_UI_HCOL_X(0), (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
 
-		Util_str_format(&format_str, "SAR:%d/%d  ASM:%s",
+		Util_str_format(&format_str, "Tex:%s", tex_tag);
+		Draw(&format_str, VP_PLAYER_UI_HCOL_X(1), (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
+
+		Util_str_format(&format_str, "SAR:%d/%d",
 			(int)vid_player.video_info[EYE_LEFT].sar_width,
-			(int)vid_player.video_info[EYE_LEFT].sar_height,
-			asm_tag);
-		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_DEC2_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
+			(int)vid_player.video_info[EYE_LEFT].sar_height);
+		Draw(&format_str, VP_PLAYER_UI_HCOL_X(2), (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
+
+		Util_str_format(&format_str, "ASM:%s", asm_tag);
+		Draw(&format_str, VP_PLAYER_UI_HCOL_X(3), (float)VP_PLAYER_STATUS_ROW_DEC_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_GREEN);
 	}
 
-	// ——— Lin / Heap（分列）+ CPU 标题 + CPU 条（布局在首次绘制或 invalidate 时定一次：2 核档=仅 C0 C1，否则 C0–C3）
+	// ——— Lin / Heap（一行两列）；下一行 CPU MHz + 条形图 ——————————————————————
 	{
 		static uint64_t diag_ts = 0;
 		static unsigned long diag_lin_kb = 0, diag_heap_free_kb = 0, diag_heap_tot_kb = 0;
@@ -181,8 +187,8 @@ void Vid_panel_player_draw_status(uint32_t color,
 			diag_heap_free_kb, diag_heap_tot_kb);
 		Draw(&format_str, VP_PLAYER_UI_DIAG_HEAP_X, (float)VP_PLAYER_STATUS_ROW_DIAG_LIN_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
 
-		Util_str_format(&format_str, "CPU  %luMHz", (unsigned long)diag_cpu_mhz);
-		Draw(&format_str, VP_PLAYER_UI_STATUS_LEFT_X, VP_PLAYER_STATUS_ROW_CPUHDR_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
+		Util_str_format(&format_str, "CPU %luMHz", (unsigned long)diag_cpu_mhz);
+		Draw(&format_str, (float)VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_CPUHDR_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, DEF_DRAW_YELLOW);
 
 		{
 			int k;

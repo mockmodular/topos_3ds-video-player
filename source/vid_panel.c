@@ -292,14 +292,27 @@ static void p_draw_progress_bar(double pts, double duration, int seek_x)
 
 static void panel_reload_listing(void);
 
-/* Effective top of file browser: sdmc:/movie only when setting asks and folder exists; else sdmc:/ */
+/* 设置项「媒体目录」在卡上的实际路径：优先 sdmc:/movies，兼容旧版 sdmc:/movie；均无则返回 NULL → 回退 TF 根。 */
+static const char *panel_media_sdmc_path(void)
+{
+    if (fs_directory_exists("sdmc:/movies"))
+        return "sdmc:/movies";
+    if (fs_directory_exists("sdmc:/movie"))
+        return "sdmc:/movie";
+    return NULL;
+}
+
+/* Effective top of file browser: 媒体模式且卡上存在上述目录之一 → 该目录；否则 sdmc:/ */
 static void panel_effective_files_root(char *out, size_t out_sz)
 {
-    if (vid_player.fs_browser_root_mode == VID_FS_BROWSER_ROOT_MOVIE
-    && fs_directory_exists("sdmc:/movie"))
-        snprintf(out, out_sz, "sdmc:/movie");
-    else
-        snprintf(out, out_sz, "sdmc:/");
+    if (vid_player.fs_browser_root_mode == VID_FS_BROWSER_ROOT_MOVIE) {
+        const char *p = panel_media_sdmc_path();
+        if (p) {
+            snprintf(out, out_sz, "%s", p);
+            return;
+        }
+    }
+    snprintf(out, out_sz, "sdmc:/");
 }
 
 void Vid_panel_files_sync_after_settings_load(void)
@@ -308,8 +321,8 @@ void Vid_panel_files_sync_after_settings_load(void)
 
     panel_effective_files_root(root, sizeof(root));
     snprintf(s_path, sizeof(s_path), "%s", root);
-    if (vid_player.panel == VID_PANEL_FILES)
-        panel_reload_listing();
+    /* 须始终刷新列表：否则当前若在 PLAYER，s_path 已随存档更新而 s_listing 仍是 init 时默认根目录的快照 */
+    panel_reload_listing();
 }
 
 void Vid_panel_files_on_root_mode_changed(void)
@@ -318,8 +331,8 @@ void Vid_panel_files_on_root_mode_changed(void)
 
     panel_effective_files_root(root, sizeof(root));
     fs_path_clamp_to_root(s_path, root);
-    if (vid_player.panel == VID_PANEL_FILES)
-        panel_reload_listing();
+    /* 与 s_path 保持一致，避免在设置里改根目录后进入文件页仍显示旧目录列表 */
+    panel_reload_listing();
 }
 
 static void panel_reload_listing(void)
@@ -1005,7 +1018,7 @@ void Vid_panel_back(void)
         case VID_PANEL_FILES: {
             char root[FS_PATH_LEN];
 
-            /* Stop at effective root: sdmc:/ or sdmc:/movie (when folder exists). */
+            /* Stop at effective root: sdmc:/ 或媒体目录（movies / 旧 movie，存在时）。 */
             panel_effective_files_root(root, sizeof(root));
             if (fs_path_up_bounded(s_path, root))
                 panel_reload_listing();

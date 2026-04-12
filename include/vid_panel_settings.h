@@ -39,7 +39,7 @@ typedef enum {
     VP_SETTING_ID_VIDEO_SCALE         = 36, /* Video submenu: pixel-perfect vs fit */
     VP_SETTING_ID_SW_SE1_NO_AUDIO     = 40,
     VP_SETTING_ID_SW_SE1_NO_VIDEO     = 41,
-    VP_SETTING_ID_FS_BROWSER_ROOT     = 42, /* Custom: browse root — movie vs SD root */
+    VP_SETTING_ID_FS_BROWSER_ROOT     = 42, /* Custom: browse root — movies folder vs SD root */
     VP_SETTING_ID_UI_MOD              = 43, /* Root: full bottom info vs minimal */
 } VpSettingId;
 
