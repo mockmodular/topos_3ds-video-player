@@ -45,8 +45,7 @@ echo [OUT]   %FILE_OUT%
 echo.
 
 if exist "%FILE_OUT%" del /f /q "%FILE_OUT%"
-
-"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p[V]" -map "[V]" -map "0:a?" -c:v mpeg2video -b:v 2000k -maxrate 2000k -bufsize 4000k -g 30 -bf 0 -profile:v main -level:v main -fps_mode cfr -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a mp2 -b:a 96k -ac 2 -ar 48000 "%FILE_OUT%"
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]setsar=1,split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" -map "[V]" -map "0:a?" -sws_dither ed  -c:v mpeg2video -b:v 2000k -maxrate 2000k -bufsize 4000k -g 30 -bf 0 -profile:v main -level:v main -fps_mode cfr -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a mp2 -b:a 96k -ac 2 -ar 48000 "%FILE_OUT%"
 
 if %errorlevel%==0 (
     echo.
