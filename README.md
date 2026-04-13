@@ -13,12 +13,12 @@ https://github.com/mockmodular/topos_3ds-video-player/tree/v0.12.0
 
 **H.264 (New 3DS)**
 ```bat
-"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]scale=iw*sar:ih,setsar=1,split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" -map "[V]" -map "0:a?" -sws_dither ed -c:v libx264 -preset slow -crf 14 -profile:v high -level 3.1 -fps_mode cfr -x264-params "aq-mode=3:aq-strength=1.0:qcomp=0.65:ref=4:bframes=4:no-fast-pskip=1" -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a aac -b:a 128k -ac 2 -ar 48000 "%FILE_OUT%"
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]setsar=1,split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" -map "[V]" -map "0:a?" -sws_dither ed -c:v libx264 -preset slow -crf 14 -profile:v high -level 3.1 -fps_mode cfr -x264-params "aq-mode=3:aq-strength=1.0:qcomp=0.65:ref=4:bframes=4:no-fast-pskip=1" -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a aac -b:a 128k -ac 2 -ar 48000 "%FILE_OUT%"
 ```
 
 **MPEG-2 (Old 3DS)**
 ```bat
-"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p[V]" -map "[V]" -map "0:a?" -c:v mpeg2video -b:v 2000k -maxrate 2000k -bufsize 4000k -g 30 -bf 0 -profile:v main -level:v main -fps_mode cfr -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a mp2 -b:a 96k -ac 2 -ar 48000 "%FILE_OUT%"
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]setsar=1,split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240):ih[Lc];[Rh]crop=min(iw\,ih*400/240):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" -map "[V]" -map "0:a?" -sws_dither ed  -c:v mpeg2video -b:v 2000k -maxrate 2000k -bufsize 4000k -g 30 -bf 0 -profile:v main -level:v main -fps_mode cfr -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a mp2 -b:a 96k -ac 2 -ar 48000 "%FILE_OUT%"
 ```
 
 Both scripts handle SAR correction, aspect-ratio-safe cropping, high-quality spline36 downscaling to 800×240, and proper BT.709 color tagging. The H.264 script targets N3DS MVD hardware decode limits (High profile, Level 3.1). The MPEG-2 script is tuned for O3DS software decode headroom (2000k CBR, no B-frames).
