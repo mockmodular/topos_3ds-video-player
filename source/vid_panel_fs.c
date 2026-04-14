@@ -21,9 +21,29 @@ static const char *inner_path(const char *path) {
     return path;
 }
 
+/* FSUSER_OpenDirectory 需要 PATH_UTF16；PATH_ASCII 无法表示中文等 UTF-8 路径段。
+ * libctru utf8_to_utf16：若返回值 > 传入的 len，表示输出已被截断，不得交给 FS（可能截在半截代理对上）。 */
+static int fs_inner_path_utf16(const char *path, uint16_t *out, size_t out_u16_cap) {
+    const char *inner = inner_path(path);
+    if (!inner || out_u16_cap < 2)
+        return -1;
+    const size_t max_out = out_u16_cap - 1; /* 留 1 个 u16 给 NUL 终止符 */
+    ssize_t n = utf8_to_utf16(out, (const uint8_t *)inner, max_out);
+    if (n < 0)
+        return -1;
+    if (n > (ssize_t)max_out)
+        return -1;
+    out[(size_t)n] = 0;
+    return 0;
+}
+
 int fs_list(const char *path, FsListing *out) {
     if (!path || !out) return -1;
     out->count = 0;
+
+    uint16_t utf16_path[FS_PATH_LEN];
+    if (fs_inner_path_utf16(path, utf16_path, FS_PATH_LEN) != 0)
+        return -1;
 
     FS_Archive archive;
     Result rc = FSUSER_OpenArchive(&archive, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""));
@@ -31,7 +51,7 @@ int fs_list(const char *path, FsListing *out) {
 
     Handle dir_handle;
     rc = FSUSER_OpenDirectory(&dir_handle, archive,
-                              fsMakePath(PATH_ASCII, inner_path(path)));
+                              fsMakePath(PATH_UTF16, utf16_path));
     if (R_FAILED(rc)) {
         FSUSER_CloseArchive(archive);
         return -1;
@@ -66,14 +86,17 @@ int fs_directory_exists(const char *path) {
     FS_Archive archive;
     Handle dir_handle;
     Result rc;
+    uint16_t utf16_path[FS_PATH_LEN];
 
     if (!path || path[0] == '\0')
+        return 0;
+    if (fs_inner_path_utf16(path, utf16_path, FS_PATH_LEN) != 0)
         return 0;
     rc = FSUSER_OpenArchive(&archive, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""));
     if (R_FAILED(rc))
         return 0;
     rc = FSUSER_OpenDirectory(&dir_handle, archive,
-                              fsMakePath(PATH_ASCII, inner_path(path)));
+                              fsMakePath(PATH_UTF16, utf16_path));
     if (R_FAILED(rc)) {
         FSUSER_CloseArchive(archive);
         return 0;
