@@ -265,7 +265,11 @@ typedef struct
 	double media_current_pos;
 	double seek_pos_cache;
 	double seek_pos;
+	/* 一次 seek 波：入队时冻结的目标(ms)；demux/完成判定用 seek_demux_target_ms，避免 seek 进行中 UI 改写 seek_pos。 */
+	double seek_queued_pos_ms;
+	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
+	bool seek_request_deferred;
 
 	/* 文件列表连续打开：合并为一条 PLAY，仅保留最后一次 malloc 的 Vid_file（解码线程取走）。 */
 	Vid_file *play_request_pending;

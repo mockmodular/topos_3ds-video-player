@@ -44,15 +44,43 @@ static bool vid_decode_mvd_blocked_real_o3ds_fake_off(void)
 	}
 }
 
-/* Refresh seek_start_pos_out, flags, speaker, audio flush, and queue demux seek for current vid_player.seek_pos. */
+/* After one SEEKING wave hits seek_demux_target_ms: run at most one follow-up seek (latest seek_pos). */
+static void vid_decode_finish_seek_wave_try_deferred(void)
+{
+	uint32_t r = DEF_ERR_OTHER;
+
+	if(!vid_player.seek_request_deferred)
+		return;
+
+	{
+		double saved_queued = vid_player.seek_queued_pos_ms;
+
+		vid_player.seek_queued_pos_ms = vid_player.seek_pos;
+		DEF_LOG_RESULT_SMART(r, Util_queue_add(&vid_player.decode_thread_command_queue,
+			DECODE_THREAD_SEEK_REQUEST, NULL, QUEUE_OP_TIMEOUT_US,
+			(Queue_option)(QUEUE_OPTION_SEND_TO_FRONT | QUEUE_OPTION_DO_NOT_ADD_IF_EXIST)),
+			(r == DEF_SUCCESS), r);
+		if(r == DEF_SUCCESS)
+			vid_player.seek_request_deferred = false;
+		else
+		{
+			vid_player.seek_queued_pos_ms = saved_queued;
+			/* seek_request_deferred 保持 true，缓冲结束等路径会再试 */
+		}
+	}
+}
+
+/* Refresh seek_start_pos_out, flags, speaker, audio flush, and queue demux seek for seek_demux_target_ms. */
 static void decode_thread_issue_demux_seek(double *seek_start_pos_out)
 {
 	uint32_t result = DEF_ERR_OTHER;
 
+	vid_player.seek_demux_target_ms = vid_player.seek_queued_pos_ms;
+
 	*seek_start_pos_out = vid_player.media_current_pos;
 	vid_player.seek_start_pos_after_jump = VID_SEEK_JUMP_ANCHOR_UNSET;
 
-	if((*seek_start_pos_out) > vid_player.seek_pos)
+	if((*seek_start_pos_out) > vid_player.seek_demux_target_ms)
 		vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state | PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
 	else
 		vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
@@ -65,7 +93,7 @@ static void decode_thread_issue_demux_seek(double *seek_start_pos_out)
 		NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_SEND_TO_FRONT), (result == DEF_SUCCESS), result);
 	}
 
-	/* One pending demux seek: handler uses current vid_player.seek_pos when it runs. */
+	/* read_packet uses seek_demux_target_ms (set above from seek_queued_pos_ms at enqueue time). */
 	DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.read_packet_thread_command_queue, READ_PACKET_THREAD_SEEK_REQUEST,
 	NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 }
@@ -556,13 +584,11 @@ void Vid_decode_thread(void* arg)
 					if(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING)
 						break;
 
-					if(vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
+					if(vid_player.state == PLAYER_STATE_PREPARE_SEEKING
+					|| vid_player.state == PLAYER_STATE_SEEKING)
 					{
-						/* Latest target is already in vid_player.seek_pos (UI sets before each request).
-						 * Re-arm demux/audio instead of re-queueing this command and sleeping. */
-						is_eof = false;
-						natural_eof_session_held = false;
-						decode_thread_issue_demux_seek(&seek_start_pos);
+						/* One seek wave at a time: never re-issue demux while the previous is in flight. */
+						vid_player.seek_request_deferred = true;
 						break;
 					}
 
@@ -615,6 +641,9 @@ void Vid_decode_thread(void* arg)
 						vid_player.file.index = 0;
 						vid_player.media_current_pos = 0;
 						vid_player.media_duration = 0;
+						vid_player.seek_request_deferred = false;
+						vid_player.seek_queued_pos_ms = 0;
+						vid_player.seek_demux_target_ms = 0;
 
 						if(event == DECODE_THREAD_SHUTDOWN_REQUEST)
 						{
@@ -710,6 +739,9 @@ void Vid_decode_thread(void* arg)
 						vid_player.media_current_pos = 0;
 						vid_player.media_duration = 0;
 						natural_eof_session_held = false;
+						vid_player.seek_request_deferred = false;
+						vid_player.seek_queued_pos_ms = 0;
+						vid_player.seek_demux_target_ms = 0;
 					}
 
 					vid_player.sub_state = PLAYER_SUB_STATE_NONE;
@@ -817,6 +849,9 @@ void Vid_decode_thread(void* arg)
 						vid_player.state = PLAYER_STATE_PAUSE;
 					}
 
+					/* e.g. follow-up seek 入队失败时 seek_request_deferred 仍为 true：缓冲结束后再试一次 */
+					vid_decode_finish_seek_wave_try_deferred();
+
 					break;
 				}
 
@@ -891,7 +926,7 @@ void Vid_decode_thread(void* arg)
 							}
 
 							//Re-seek to target position after reopen.
-							Util_decoder_seek(vid_player.seek_pos, MEDIA_SEEK_FLAG_BACKWARD, DEF_VID_DECORDER_SESSION_ID);
+							Util_decoder_seek(vid_player.seek_demux_target_ms, MEDIA_SEEK_FLAG_BACKWARD, DEF_VID_DECORDER_SESSION_ID);
 							Util_decoder_clear_cache_packet(DEF_VID_DECORDER_SESSION_ID);
 						}
 					}
@@ -1104,7 +1139,7 @@ void Vid_decode_thread(void* arg)
 				else if(vid_player.seek_start_pos_after_jump == VID_SEEK_JUMP_ANCHOR_UNSET && wait_count == 0)
 					vid_player.seek_start_pos_after_jump = vid_player.media_current_pos;//We've jumped.
 
-				if(!(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT) && vid_player.media_current_pos >= vid_player.seek_pos)
+				if(!(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT) && vid_player.media_current_pos >= vid_player.seek_demux_target_ms)
 				{
 					//Seek has finished.
 
@@ -1128,6 +1163,7 @@ void Vid_decode_thread(void* arg)
 							vid_player.state = PLAYER_STATE_PAUSE;
 						}
 					}
+					vid_decode_finish_seek_wave_try_deferred();
 				}
 
 				if(wait_count > 0)
@@ -1317,7 +1353,7 @@ void Vid_read_packet_thread(void* arg)
 					if(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING)
 						break;
 
-					DEF_LOG_RESULT_SMART(result, Util_decoder_seek(vid_player.seek_pos, MEDIA_SEEK_FLAG_BACKWARD,
+					DEF_LOG_RESULT_SMART(result, Util_decoder_seek(vid_player.seek_demux_target_ms, MEDIA_SEEK_FLAG_BACKWARD,
 					DEF_VID_DECORDER_SESSION_ID), (result == DEF_SUCCESS), result);
 					Util_decoder_clear_cache_packet(DEF_VID_DECORDER_SESSION_ID);
 
