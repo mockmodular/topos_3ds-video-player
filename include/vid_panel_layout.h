@@ -136,7 +136,7 @@ static inline float vp_chrome_top_text_ty(float text_h)
 /* 进度条（仅在 Player 面板额外绘制时使用） */
 #define VP_PROGRESS_INVALID 10   /* 两端死区宽度（各10px，不到达屏幕边缘） */
 #define VP_PROGRESS_H       3    /* 实际绘制的条高度（像素） */
-#define VP_PROGRESS_HIT_H   7    /* 触摸命中高度；以 VP_PROGRESS_Y 条顶为基准上下对称扩展 */
+#define VP_PROGRESS_HIT_H   24   /* 触摸命中高度；以 VP_PROGRESS_Y 条顶为基准上下对称扩展 */
 /* 进度条 + 上方「当前/总时长」与右侧 seeking 文案整组上移（像素） */
 #define VP_PROGRESS_GROUP_UP_PX 8
 #define VP_PROGRESS_Y       (VP_SCREEN_H - VP_FOOTER_H - 10 - VP_PROGRESS_GROUP_UP_PX)
