@@ -74,9 +74,10 @@ void VidSeekEngine_on_bar_commit(void)
 
 void VidSeekEngine_on_step_fwd(void)
 {
-	/* seek_pos 在「拖条松手积压」时可能已是下一目标；步进以当前这波冻结的 seek_queued 为准 */
+	/* 连按左右：在 seek 波进行中必须用 seek_pos 累加。
+	 * seek_queued_pos_ms 整波冻结，若用它作基准则第 2 次及以后的按键都会算成「同一起点 + 一步」，无法连续快进。 */
 	double current_pos = (vid_player.state == PLAYER_STATE_SEEKING || vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
-		? vid_player.seek_queued_pos_ms : vid_player.media_current_pos;
+		? vid_player.seek_pos : vid_player.media_current_pos;
 
 	vid_player.seek_pos = current_pos + DEF_UTIL_S_TO_MS_D(vid_player.seek_duration);
 	seek_engine_submit();
@@ -85,7 +86,7 @@ void VidSeekEngine_on_step_fwd(void)
 void VidSeekEngine_on_step_back(void)
 {
 	double current_pos = (vid_player.state == PLAYER_STATE_SEEKING || vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
-		? vid_player.seek_queued_pos_ms : vid_player.media_current_pos;
+		? vid_player.seek_pos : vid_player.media_current_pos;
 
 	vid_player.seek_pos = current_pos - DEF_UTIL_S_TO_MS_D(vid_player.seek_duration);
 	seek_engine_submit();

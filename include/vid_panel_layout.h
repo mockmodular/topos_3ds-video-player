@@ -135,11 +135,12 @@ static inline float vp_chrome_top_text_ty(float text_h)
 
 /* 进度条（仅在 Player 面板额外绘制时使用） */
 #define VP_PROGRESS_INVALID 10   /* 两端死区宽度（各10px，不到达屏幕边缘） */
-#define VP_PROGRESS_H       3
+#define VP_PROGRESS_H       3    /* 实际绘制的条高度（像素） */
+#define VP_PROGRESS_HIT_H   7    /* 触摸命中高度；以 VP_PROGRESS_Y 条顶为基准上下对称扩展 */
 /* 进度条 + 上方「当前/总时长」与右侧 seeking 文案整组上移（像素） */
 #define VP_PROGRESS_GROUP_UP_PX 8
 #define VP_PROGRESS_Y       (VP_SCREEN_H - VP_FOOTER_H - 10 - VP_PROGRESS_GROUP_UP_PX)
-#define VP_PROGRESS_SLOP    12   /* vertical hit-test slop above/below bar */
+#define VP_PROGRESS_HIT_TOP (VP_PROGRESS_Y - ((VP_PROGRESS_HIT_H - VP_PROGRESS_H) / 2))
 
 /* 进度条上方时间 / Seek 文案：`Draw` 字号 DEF_DRAW_TEXT_SCALE(0.30)；y 在条带上方固定间距。 */
 #define VP_TIMEBAR_TEXT_ABOVE_PROGRESS  15.0f
@@ -151,12 +152,12 @@ static inline float vp_chrome_top_text_ty(float text_h)
 #define VP_PROGRESS_X_MAX   (VP_SCREEN_W - 1 - VP_PROGRESS_INVALID)
 #define VP_PROGRESS_TOTAL_W (VP_SCREEN_W - VP_PROGRESS_INVALID * 2)
 
-/* Seek-bar hit-test: true when (px,py) is within the progress bar + slop zone */
+/* Seek-bar hit-test: 宽同条；竖直为 VP_PROGRESS_HIT_H，与 3px 视觉条共中心 */
 static inline int vp_progress_hit(int px, int py)
 {
     return (px >= VP_PROGRESS_X_MIN && px <= VP_PROGRESS_X_MAX
-         && py >= VP_PROGRESS_Y - VP_PROGRESS_SLOP
-         && py <= VP_PROGRESS_Y + VP_PROGRESS_H + VP_PROGRESS_SLOP);
+         && py >= VP_PROGRESS_HIT_TOP
+         && py < VP_PROGRESS_HIT_TOP + VP_PROGRESS_HIT_H);
 }
 
 /* Convert a touch X pixel to a [0,1] progress ratio, clamped */

@@ -114,11 +114,11 @@ void Vid_panel_player_draw_status(uint32_t color,
 		const char* asm_tag =
 			(cached_cpu_flags & AV_CPU_FLAG_ARMV6)   ? "A6"  :
 			(cached_cpu_flags & AV_CPU_FLAG_ARMV5TE) ? "A5"  : "--";
+		/* HW/MVD：硬解 H.264。SW/Y2R：软解 + Y2R（2D/SBS/HEVC 等）；不再对 SBS 单独写「Y2R」以免误判为无软解 */
 		const char* dec_tag =
-			(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? "MVD/HW" :
+			(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) ? "HW/MVD" :
 			(vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION) ?
-				(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R ? "NEONy2r" :
-				vid_player.is_sbs_3d ? "Y2R" : "SW/Y2R") : "SW/CPU";
+				(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R ? "NEONy2r" : "SW/Y2R") : "SW/CPU";
 		const char* tex_tag =
 			Vid_effective_use_linear_texture_filter(EYE_LEFT) ? "LINEAR" : "NEAR";
 
