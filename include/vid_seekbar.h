@@ -12,7 +12,7 @@
 #define VID_SEEKBAR_X    ((double)VP_PROGRESS_X_MIN)
 #define VID_SEEKBAR_Y    ((double)VP_PROGRESS_Y)
 #define VID_SEEKBAR_W    ((double)VP_PROGRESS_TOTAL_W)
-#define VID_SEEKBAR_H    ((double)(VP_PROGRESS_H + VP_PROGRESS_SLOP * 2))
+#define VID_SEEKBAR_H    ((double)VP_PROGRESS_HIT_H)
 
 /* Returns true if the touch point falls within the seek bar + slop area. */
 static inline bool VidSeekBar_hit_test(int16_t touch_x, int16_t touch_y)
