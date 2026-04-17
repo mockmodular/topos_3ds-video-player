@@ -5,14 +5,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "3ds.h"
-
 #include "system/util/err_types.h"
 #include "system/util/log.h"
 #include "system/util/media_types.h"
 
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
+#include "libavutil/error.h"
+
+#include "3ds.h"
+
+/* Wall-clock cap for avformat_seek_file (FFmpeg interrupt_callback). */
+#ifndef DEF_DEMUX_SEEK_INTERRUPT_MS
+#define DEF_DEMUX_SEEK_INTERRUPT_MS ((uint64_t)15000)
+#endif
 
 static bool dd_opened_file[DEF_DECODER_MAX_SESSIONS] = { 0, };
 static uint8_t dd_audio_stream_num[DEF_DECODER_MAX_SESSIONS][DEF_DECODER_MAX_AUDIO_TRACKS] = { 0, };
@@ -319,15 +325,31 @@ uint32_t DecoderDemux_parse_packet(Media_packet_type* type, uint8_t* packet_inde
 	return route_result;
 }
 
+static int DecoderDemux_seek_interrupt(void *opaque)
+{
+	const uint64_t *deadline = (const uint64_t *)opaque;
+
+	if(!deadline)
+		return 0;
+	return osGetTime() >= *deadline ? 1 : 0;
+}
+
 uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t session)
 {
 	int32_t ffmpeg_result = 0;
 	int32_t ffmpeg_seek_flag = 0;
+	AVFormatContext *fmt = NULL;
+	AVIOInterruptCB saved_interrupt;
+	uint64_t deadline = 0;
 
 	if(session >= DEF_DECODER_MAX_SESSIONS)
 		goto invalid_arg;
 
 	if(!dd_opened_file[session])
+		goto not_inited;
+
+	fmt = dd_format_context[session];
+	if(!fmt)
 		goto not_inited;
 
 	if(flag & MEDIA_SEEK_FLAG_BACKWARD)
@@ -339,10 +361,21 @@ uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t sess
 	if(flag & MEDIA_SEEK_FLAG_FRAME)
 		ffmpeg_seek_flag |= AVSEEK_FLAG_FRAME;
 
-	ffmpeg_result = avformat_seek_file(dd_format_context[session], -1, INT64_MIN, (int64_t)(seek_pos * 1000), INT64_MAX, ffmpeg_seek_flag);
+	deadline = osGetTime() + DEF_DEMUX_SEEK_INTERRUPT_MS;
+	saved_interrupt = fmt->interrupt_callback;
+	fmt->interrupt_callback.callback = DecoderDemux_seek_interrupt;
+	fmt->interrupt_callback.opaque = &deadline;
+
+	ffmpeg_result = avformat_seek_file(fmt, -1, INT64_MIN, (int64_t)(seek_pos * 1000), INT64_MAX, ffmpeg_seek_flag);
+
+	fmt->interrupt_callback = saved_interrupt;
+
 	if(ffmpeg_result < 0)
 	{
-		DEF_LOG_RESULT(avformat_seek_file, false, ffmpeg_result);
+		if(ffmpeg_result == AVERROR_EXIT)
+			DEF_LOG_STRING("avformat_seek_file interrupted (time limit).");
+		else
+			DEF_LOG_RESULT(avformat_seek_file, false, ffmpeg_result);
 		goto ffmpeg_api_failed;
 	}
 

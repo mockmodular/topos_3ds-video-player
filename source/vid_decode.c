@@ -70,6 +70,25 @@ static void vid_decode_finish_seek_wave_try_deferred(void)
 	}
 }
 
+/* End of one seek wave once demux time has crossed target (or stall rescue). */
+static void vid_decode_seek_wave_complete(void)
+{
+	if(Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+		vid_player.state = PLAYER_STATE_BUFFERING;
+	else
+	{
+		if(vid_player.sub_state & PLAYER_SUB_STATE_RESUME_LATER)
+		{
+			vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_RESUME_LATER);
+			Util_speaker_resume(DEF_VID_SPEAKER_SESSION_ID);
+			vid_player.state = PLAYER_STATE_PLAYING;
+		}
+		else
+			vid_player.state = PLAYER_STATE_PAUSE;
+	}
+	vid_decode_finish_seek_wave_try_deferred();
+}
+
 /* Refresh seek_start_pos_out, flags, speaker, audio flush, and queue demux seek for seek_demux_target_ms. */
 static void decode_thread_issue_demux_seek(double *seek_start_pos_out)
 {
@@ -644,6 +663,7 @@ void Vid_decode_thread(void* arg)
 						vid_player.seek_request_deferred = false;
 						vid_player.seek_queued_pos_ms = 0;
 						vid_player.seek_demux_target_ms = 0;
+						vid_player.seek_stall_rescue_packets = 0;
 
 						if(event == DECODE_THREAD_SHUTDOWN_REQUEST)
 						{
@@ -742,6 +762,7 @@ void Vid_decode_thread(void* arg)
 						vid_player.seek_request_deferred = false;
 						vid_player.seek_queued_pos_ms = 0;
 						vid_player.seek_demux_target_ms = 0;
+						vid_player.seek_stall_rescue_packets = 0;
 					}
 
 					vid_player.sub_state = PLAYER_SUB_STATE_NONE;
@@ -809,6 +830,7 @@ void Vid_decode_thread(void* arg)
 						/* Audio-only (or no video): no frame threads — same as old loop with count 0. */
 						wait_count = SEEK_IGNORE_PACKETS;
 						backward_timeout = SEEK_BACKWARD_TIMEOUT;
+						vid_player.seek_stall_rescue_packets = SEEK_STALL_RESCUE_PACKETS;
 						vid_player.state = PLAYER_STATE_SEEKING;
 					}
 					else
@@ -937,6 +959,7 @@ void Vid_decode_thread(void* arg)
 					//After clearing cache start seeking.
 					wait_count = (SEEK_IGNORE_PACKETS + num_of_threads);
 					backward_timeout = SEEK_BACKWARD_TIMEOUT;
+					vid_player.seek_stall_rescue_packets = SEEK_STALL_RESCUE_PACKETS;
 					vid_player.state = PLAYER_STATE_SEEKING;
 
 					break;
@@ -1140,31 +1163,7 @@ void Vid_decode_thread(void* arg)
 					vid_player.seek_start_pos_after_jump = vid_player.media_current_pos;//We've jumped.
 
 				if(!(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT) && vid_player.media_current_pos >= vid_player.seek_demux_target_ms)
-				{
-					//Seek has finished.
-
-					//Buffer some data before resuming playback if file contains normal videos.
-					if(Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
-						vid_player.state = PLAYER_STATE_BUFFERING;
-					else
-					{
-						if(vid_player.sub_state & PLAYER_SUB_STATE_RESUME_LATER)
-						{
-							//Remove resume later bit.
-							vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_RESUME_LATER);
-
-							//Resume the playback.
-							Util_speaker_resume(DEF_VID_SPEAKER_SESSION_ID);
-							vid_player.state = PLAYER_STATE_PLAYING;
-						}
-						else
-						{
-							//Don't resume.
-							vid_player.state = PLAYER_STATE_PAUSE;
-						}
-					}
-					vid_decode_finish_seek_wave_try_deferred();
-				}
+					vid_decode_seek_wave_complete();
 
 				if(wait_count > 0)
 					wait_count--;
@@ -1172,6 +1171,23 @@ void Vid_decode_thread(void* arg)
 					backward_timeout--;
 				else//Timeout, remove seek backward wait bit.
 					vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
+			}
+
+			/* Bad/missing PTS: media_current_pos may never reach seek_demux_target_ms; bound work per wave.
+			 * Only count packets after wait_count warmup and not during backward-wait (same phase as real completion). */
+			if(vid_player.state == PLAYER_STATE_SEEKING)
+			{
+				if(wait_count == 0 && !(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT)
+				&& vid_player.seek_stall_rescue_packets > 0)
+					vid_player.seek_stall_rescue_packets--;
+				/* 与递减条件一致，避免将来改动后出现「预算耗尽但仍在忽略包阶段」误触发。 */
+				if(wait_count == 0 && !(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT)
+				&& vid_player.seek_stall_rescue_packets == 0)
+				{
+					DEF_LOG_STRING("SEEKING stall rescue (packet budget).");
+					vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
+					vid_decode_seek_wave_complete();
+				}
 			}
 
 			if(type == MEDIA_PACKET_TYPE_UNKNOWN)

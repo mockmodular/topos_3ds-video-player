@@ -204,6 +204,7 @@ void Vid_init_media_data(void)
 	vid_player.seek_demux_target_ms = 0;
 	vid_player.seek_start_pos_after_jump = VID_SEEK_JUMP_ANCHOR_UNSET;
 	vid_player.seek_request_deferred = false;
+	vid_player.seek_stall_rescue_packets = 0;
 }
 
 void Vid_init_video_data(void)

@@ -25,6 +25,8 @@
 
 #define SEEK_IGNORE_PACKETS							(uint8_t)(5)
 #define SEEK_BACKWARD_TIMEOUT						(uint8_t)(20)
+/* SEEKING 阶段：在 wait_count 已耗尽且非 backward-wait 时，每成功 parse 一包递减；到 0 仍达不到 seek_demux_target_ms 则强制结束该波 seek。须 >0。 */
+#define SEEK_STALL_RESCUE_PACKETS					(uint16_t)(20000)
 /* seek_start_pos_after_jump: unset until demux time is anchored (decode seek state); valid anchors are >= 0 ms */
 #define VID_SEEK_JUMP_ANCHOR_UNSET					(-1.0)
 
@@ -270,6 +272,7 @@ typedef struct
 	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
 	bool seek_request_deferred;
+	uint16_t seek_stall_rescue_packets;
 
 	/* 文件列表连续打开：合并为一条 PLAY，仅保留最后一次 malloc 的 Vid_file（解码线程取走）。 */
 	Vid_file *play_request_pending;
