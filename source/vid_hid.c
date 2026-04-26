@@ -7,19 +7,14 @@
 #include "vid_hid_macros.h"
 #include "vid_panel.h"
 
-/* File-list nav: 300ms initial delay, then 83ms interval (12 times/sec).
+/* 列表/设置：300ms 首延 + 83ms 间隔（约 12 次/秒），与物理按住对齐（DEF_HID_PHY_HE）。
+ * Player 左右 seek：同首延 + (1000/6)ms ≈ 6 次/秒。
  *
- * State is tracked with an absolute timestamp (osGetTime ms) rather than a
- * "range slot" counter.  This makes the repeat logic immune to how many times
- * the key was tapped before entering hold: as soon as the key has been held
- * for more than INITIAL_DELAY the first repeat fires, and then every
- * REPEAT_INTERVAL ms regardless of prior tap history.
- *
- * Two independent state structs (one per direction) avoid any cross-direction
- * contamination.
+ * next_fire 用绝对毫秒时间，避免连点后再长按导致重复节奏错乱。
  */
-#define VID_HID_NAV_INITIAL_DELAY_MS   300u
-#define VID_HID_NAV_REPEAT_INTERVAL_MS  83u
+#define VID_HID_NAV_INITIAL_DELAY_MS    300u
+#define VID_HID_NAV_REPEAT_INTERVAL_MS   83u
+#define VID_HID_PLAYER_SEEK_REPEAT_MS  ((1000u + 3u) / 6u) /* 6 Hz */
 
 typedef struct {
 	bool     active;       /* key is currently being held */
@@ -35,9 +30,15 @@ static NavRepeatState s_set_down  = { false, 0 };
 static NavRepeatState s_set_left  = { false, 0 };
 static NavRepeatState s_set_right = { false, 0 };
 
-static void vid_hid_nav_interval(Hid_key key_val,
-                                 NavRepeatState *st,
-                                 bool *fire_now)
+/* Player 面板 / 全屏：左右 seek 各一条重复状态 */
+static NavRepeatState s_pl_seek_left  = { false, 0 };
+static NavRepeatState s_pl_seek_right = { false, 0 };
+
+static void vid_hid_key_repeat_tick(Hid_key key_val,
+                                    NavRepeatState *st,
+                                    bool *fire_now,
+                                    uint32_t initial_delay_ms,
+                                    uint32_t repeat_interval_ms)
 {
 	*fire_now = false;
 
@@ -63,7 +64,7 @@ static void vid_hid_nav_interval(Hid_key key_val,
 	{
 		/* Transition into hold: schedule first repeat after initial delay. */
 		st->active       = true;
-		st->next_fire_ms = now + VID_HID_NAV_INITIAL_DELAY_MS;
+		st->next_fire_ms = now + initial_delay_ms;
 		return;
 	}
 
@@ -71,10 +72,10 @@ static void vid_hid_nav_interval(Hid_key key_val,
 	if(now >= st->next_fire_ms)
 	{
 		*fire_now = true;
-		st->next_fire_ms += VID_HID_NAV_REPEAT_INTERVAL_MS;
+		st->next_fire_ms += repeat_interval_ms;
 		/* Guard against falling too far behind (e.g. after a very long frame). */
 		if(st->next_fire_ms < now)
-			st->next_fire_ms = now + VID_HID_NAV_REPEAT_INTERVAL_MS;
+			st->next_fire_ms = now + repeat_interval_ms;
 	}
 }
 
@@ -177,10 +178,10 @@ void Vid_hid_enqueue(const Hid_info *key, const VidHidLayout *layout, const VidH
 			bool set_left_fire  = false;
 			bool set_right_fire = false;
 
-			vid_hid_nav_interval(k->d_up,    &s_set_up,    &set_up_fire);
-			vid_hid_nav_interval(k->d_down,  &s_set_down,  &set_down_fire);
-			vid_hid_nav_interval(k->d_left,  &s_set_left,  &set_left_fire);
-			vid_hid_nav_interval(k->d_right, &s_set_right, &set_right_fire);
+			vid_hid_key_repeat_tick(k->d_up,    &s_set_up,    &set_up_fire,    VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
+			vid_hid_key_repeat_tick(k->d_down,  &s_set_down,  &set_down_fire,  VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
+			vid_hid_key_repeat_tick(k->d_left,  &s_set_left,  &set_left_fire,  VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
+			vid_hid_key_repeat_tick(k->d_right, &s_set_right, &set_right_fire, VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
 
 			if(DEF_HID_PHY_PR(k->d_up) || set_up_fire)
 				(void)vid_push(VID_CMD_SET_NAV_UP);
@@ -200,8 +201,8 @@ void Vid_hid_enqueue(const Hid_info *key, const VidHidLayout *layout, const VidH
 		{
 			bool nav_up_repeat   = false;
 			bool nav_down_repeat = false;
-			vid_hid_nav_interval(k->d_up,   &s_nav_up,   &nav_up_repeat);
-			vid_hid_nav_interval(k->d_down, &s_nav_down, &nav_down_repeat);
+			vid_hid_key_repeat_tick(k->d_up,   &s_nav_up,   &nav_up_repeat,   VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
+			vid_hid_key_repeat_tick(k->d_down, &s_nav_down, &nav_down_repeat, VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_NAV_REPEAT_INTERVAL_MS);
 
 			if(DEF_HID_PHY_PR(k->d_up) || nav_up_repeat)
 				(void)vid_push(VID_CMD_PANEL_NAV_UP);
@@ -270,17 +271,36 @@ void Vid_hid_enqueue_seek(const Hid_info *key, const VidHidLayout *layout, const
 			(void)vid_push_i(VID_CMD_SEEK_BAR_DRAG, (int32_t)k->touch_x);
 		else if(VID_HID_SEEK_BAR_CFM(*k, *layout, *locks))
 			(void)vid_push(VID_CMD_SEEK_BAR_COMMIT);
-		else if(VID_HID_FULL_SEEK_FWD_CFM(*k))
-			(void)vid_push(VID_CMD_SEEK_BUTTON_FWD);
-		else if(VID_HID_FULL_SEEK_BACK_CFM(*k))
-			(void)vid_push(VID_CMD_SEEK_BUTTON_BACK);
+		else
+		{
+			bool pl_r_fire = false;
+			bool pl_l_fire = false;
+
+			vid_hid_key_repeat_tick(k->d_right, &s_pl_seek_right, &pl_r_fire,
+				VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
+			vid_hid_key_repeat_tick(k->d_left, &s_pl_seek_left, &pl_l_fire,
+				VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
+
+			if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
+				(void)vid_push(VID_CMD_SEEK_BUTTON_FWD);
+			else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
+				(void)vid_push(VID_CMD_SEEK_BUTTON_BACK);
+		}
 	}
 	else if(rs->panel == VID_PANEL_PLAYER)
 	{
-		/* d-pad seek buttons only (touch is handled by panel system) */
-		if(VID_HID_FULL_SEEK_FWD_CFM(*k))
+		/* 十字键左右：短按一步；长按约 300ms 后约 6 次/秒（与列表长按节奏同首延）。 */
+		bool pl_r_fire = false;
+		bool pl_l_fire = false;
+
+		vid_hid_key_repeat_tick(k->d_right, &s_pl_seek_right, &pl_r_fire,
+			VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
+		vid_hid_key_repeat_tick(k->d_left, &s_pl_seek_left, &pl_l_fire,
+			VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
+
+		if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
 			(void)vid_push(VID_CMD_SEEK_BUTTON_FWD);
-		else if(VID_HID_FULL_SEEK_BACK_CFM(*k))
+		else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
 			(void)vid_push(VID_CMD_SEEK_BUTTON_BACK);
 	}
 

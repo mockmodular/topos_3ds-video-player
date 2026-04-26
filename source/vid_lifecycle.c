@@ -180,6 +180,7 @@ static void Vid_init_variable(void)
 void Vid_init_debug_view_data(void)
 {
 	vid_player.previous_ts = 0;
+	vid_player.total_dropped_frames = 0;
 
 	for(uint8_t i = 0; i < DEBUG_GRAPH_TEMP_ELEMENTS; i++)
 		vid_player.frame_list[i] = NULL;
@@ -196,6 +197,7 @@ static void Vid_init_player_data(void)
 
 void Vid_init_media_data(void)
 {
+	vid_player.is_eof = false;
 	vid_player.media_duration = 0;
 	vid_player.media_current_pos = 0;
 	vid_player.seek_pos_cache = 0;

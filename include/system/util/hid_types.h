@@ -8,6 +8,12 @@
 #define DEF_HID_HELD_THRESHOLD_MS			(uint32_t)(200)
 #define DEF_HID_RELEASE_THRESHOLD_MS		(uint32_t)(200)
 
+/* Circle Pad（左摇杆）→ 四向虚拟键：hid.c 中与 D-Pad 合并进 d_up/d_down/d_left/d_right。
+ * 量程约 ±156；死区内不触发；斜推时只认 |dx|/|dy| 较大的一轴，避免同时 UP+RIGHT。
+ * ACTIVATE 与 DEADZONE 取同值：中心「圆」内为中性，越界后按主导轴四选一。 */
+#define DEF_HID_CPAD_DEADZONE_AX			(28)
+#define DEF_HID_CPAD_ACTIVATE_AX			(28)
+
 typedef uint32_t Hid_key_bit;
 #define HID_KEY_BIT_NONE		(Hid_key_bit)(0 <<  0)
 #define HID_KEY_BIT_A			(Hid_key_bit)(1 <<  0)

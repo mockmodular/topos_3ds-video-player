@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <3ds.h>
+
 #include "system/draw/draw.h"
 #include "system/util/err_types.h"
 #include "system/util/log.h"
@@ -66,6 +68,8 @@ typedef struct
 
 //Prototypes.
 static void Util_hid_update_key_state(bool is_pressed, bool is_held, bool is_released, uint64_t current_ts, Hid_internal_info* internal_key, Hid_key* key);
+static void util_hid_circle_cardinal_from_analog(int16_t dx, int16_t dy, bool *out_u, bool *out_d, bool *out_l, bool *out_r);
+static void util_hid_update_axis_virtual(bool raw_now, bool *prev_now, uint64_t current_ts, Hid_internal_info *internal_key, Hid_key *key);
 void Util_hid_scan_hid_thread(void* arg);
 
 //Variables.
@@ -76,6 +80,11 @@ static Hid_internal_keys util_hid_internal_keys = { 0, };
 static Sync_data util_hid_callback_mutex = { 0, }, util_hid_data_mutex = { 0, };
 static void (*util_hid_callbacks[DEF_HID_NUM_OF_CALLBACKS])(void) = { 0, };
 static Thread util_hid_scan_thread = NULL;
+
+/* Circle Pad 四向：上一帧是否在「激活区」内（用于边沿 → Util_hid_update_key_state） */
+static bool s_cpad_prev_u, s_cpad_prev_d, s_cpad_prev_l, s_cpad_prev_r;
+/* D-Pad 与 CPAD 合并后的上一帧物理按下态 */
+static bool s_dpad_merge_prev_u, s_dpad_merge_prev_d, s_dpad_merge_prev_l, s_dpad_merge_prev_r;
 
 //Code.
 uint32_t Util_hid_init(void)
@@ -246,41 +255,49 @@ void Util_hid_reset_key_state(Hid_key_bit keys)
 	{
 		util_hid_info.c_up = clean;
 		util_hid_internal_keys.c_up = clean_internal;
+		s_cpad_prev_u = false;
 	}
 	if(keys & HID_KEY_BIT_C_DOWN)
 	{
 		util_hid_info.c_down = clean;
 		util_hid_internal_keys.c_down = clean_internal;
+		s_cpad_prev_d = false;
 	}
 	if(keys & HID_KEY_BIT_C_LEFT)
 	{
 		util_hid_info.c_left = clean;
 		util_hid_internal_keys.c_left = clean_internal;
+		s_cpad_prev_l = false;
 	}
 	if(keys & HID_KEY_BIT_C_RIGHT)
 	{
 		util_hid_info.c_right = clean;
 		util_hid_internal_keys.c_right = clean_internal;
+		s_cpad_prev_r = false;
 	}
 	if(keys & HID_KEY_BIT_D_UP)
 	{
 		util_hid_info.d_up = clean;
 		util_hid_internal_keys.d_up = clean_internal;
+		s_dpad_merge_prev_u = false;
 	}
 	if(keys & HID_KEY_BIT_D_DOWN)
 	{
 		util_hid_info.d_down = clean;
 		util_hid_internal_keys.d_down = clean_internal;
+		s_dpad_merge_prev_d = false;
 	}
 	if(keys & HID_KEY_BIT_D_LEFT)
 	{
 		util_hid_info.d_left = clean;
 		util_hid_internal_keys.d_left = clean_internal;
+		s_dpad_merge_prev_l = false;
 	}
 	if(keys & HID_KEY_BIT_D_RIGHT)
 	{
 		util_hid_info.d_right = clean;
 		util_hid_internal_keys.d_right = clean_internal;
+		s_dpad_merge_prev_r = false;
 	}
 	if(keys & HID_KEY_BIT_CS_UP)
 	{
@@ -596,6 +613,43 @@ static void Util_hid_update_key_state(bool is_pressed, bool is_held, bool is_rel
 	}
 }
 
+static void util_hid_circle_cardinal_from_analog(int16_t dx, int16_t dy,
+	bool *out_u, bool *out_d, bool *out_l, bool *out_r)
+{
+	int ax = (int)dx < 0 ? -(int)dx : (int)dx;
+	int ay = (int)dy < 0 ? -(int)dy : (int)dy;
+
+	*out_u = *out_d = *out_l = *out_r = false;
+	if(ax < DEF_HID_CPAD_DEADZONE_AX && ay < DEF_HID_CPAD_DEADZONE_AX)
+		return;
+
+	if(ay >= ax)
+	{
+		if(dy < -DEF_HID_CPAD_ACTIVATE_AX)
+			*out_u = true;
+		else if(dy > DEF_HID_CPAD_ACTIVATE_AX)
+			*out_d = true;
+	}
+	else
+	{
+		if(dx < -DEF_HID_CPAD_ACTIVATE_AX)
+			*out_l = true;
+		else if(dx > DEF_HID_CPAD_ACTIVATE_AX)
+			*out_r = true;
+	}
+}
+
+static void util_hid_update_axis_virtual(bool raw_now, bool *prev_now, uint64_t current_ts,
+	Hid_internal_info *internal_key, Hid_key *key)
+{
+	bool is_pressed = (raw_now && !*prev_now);
+	bool is_released = (!raw_now && *prev_now);
+	bool is_held = (raw_now && *prev_now);
+
+	Util_hid_update_key_state(is_pressed, is_held, is_released, current_ts, internal_key, key);
+	*prev_now = raw_now;
+}
+
 void Util_hid_scan_hid_thread(void* arg)
 {
 	(void)arg;
@@ -639,14 +693,29 @@ void Util_hid_scan_hid_thread(void* arg)
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_ZR, zr));
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_START, start));
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_SELECT, select));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CPAD_UP, c_up));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CPAD_DOWN, c_down));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CPAD_LEFT, c_left));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CPAD_RIGHT, c_right));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_DUP, d_up));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_DDOWN, d_down));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_DLEFT, d_left));
-		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_DRIGHT, d_right));
+		{
+			bool an_u = false, an_d = false, an_l = false, an_r = false;
+
+			util_hid_circle_cardinal_from_analog(circle_pos.dx, circle_pos.dy, &an_u, &an_d, &an_l, &an_r);
+
+			util_hid_update_axis_virtual(an_u, &s_cpad_prev_u, util_hid_info.ts,
+				&util_hid_internal_keys.c_up, &util_hid_info.c_up);
+			util_hid_update_axis_virtual(an_d, &s_cpad_prev_d, util_hid_info.ts,
+				&util_hid_internal_keys.c_down, &util_hid_info.c_down);
+			util_hid_update_axis_virtual(an_l, &s_cpad_prev_l, util_hid_info.ts,
+				&util_hid_internal_keys.c_left, &util_hid_info.c_left);
+			util_hid_update_axis_virtual(an_r, &s_cpad_prev_r, util_hid_info.ts,
+				&util_hid_internal_keys.c_right, &util_hid_info.c_right);
+
+			util_hid_update_axis_virtual((((key_held & KEY_DUP) != 0) || an_u), &s_dpad_merge_prev_u, util_hid_info.ts,
+				&util_hid_internal_keys.d_up, &util_hid_info.d_up);
+			util_hid_update_axis_virtual((((key_held & KEY_DDOWN) != 0) || an_d), &s_dpad_merge_prev_d, util_hid_info.ts,
+				&util_hid_internal_keys.d_down, &util_hid_info.d_down);
+			util_hid_update_axis_virtual((((key_held & KEY_DLEFT) != 0) || an_l), &s_dpad_merge_prev_l, util_hid_info.ts,
+				&util_hid_internal_keys.d_left, &util_hid_info.d_left);
+			util_hid_update_axis_virtual((((key_held & KEY_DRIGHT) != 0) || an_r), &s_dpad_merge_prev_r, util_hid_info.ts,
+				&util_hid_internal_keys.d_right, &util_hid_info.d_right);
+		}
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CSTICK_UP, cs_up));
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CSTICK_DOWN, cs_down));
 		Util_hid_update_key_state(UPDATE_STATE_ARG(KEY_CSTICK_LEFT, cs_left));

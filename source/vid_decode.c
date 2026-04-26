@@ -17,6 +17,8 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include <malloc.h>
 #include <time.h>
 
+#include <3ds/os.h>
+
 #include "system/sem.h"
 #include "system/util/converter.h"
 #include "system/util/err.h"
@@ -25,6 +27,22 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "system/util/speaker.h"
 #include "system/util/sync.h"
 #include "system/util/watch.h"
+
+/* SEEKING：若仅有音频包则原逻辑从不减 wait_count，stall rescue 永不触发 → 拖条卡死。
+ * 墙钟超时兜底（坏索引/截断文件/目标后无视频包）。 */
+#define VID_SEEK_WALL_TIMEOUT_MS	((uint64_t)5000)
+
+static uint64_t s_seek_decode_enter_ts;
+
+static void vid_decode_seek_mark_enter(void)
+{
+	s_seek_decode_enter_ts = osGetTime();
+}
+
+static void vid_decode_seek_clear_enter(void)
+{
+	s_seek_decode_enter_ts = 0;
+}
 
 //Defines (reference vid_player directly, cannot move to vid_state.h).
 #define HW_DECODER_RAW_IMAGE_SIZE				(uint32_t)(vid_player.video_info[EYE_LEFT].width * vid_player.video_info[EYE_LEFT].height * 4)
@@ -44,6 +62,12 @@ static bool vid_decode_mvd_blocked_real_o3ds_fake_off(void)
 	}
 }
 
+/*
+ * 解码线程 seek 约束（与 VidSeekEngine 一致）：
+ * - 仅 PREPARE_SEEKING→…→（视频）BUFFERING 这一波内持有 demux 目标 seek_demux_target_ms。
+ * - BUFFERING 上收到 DECODE_THREAD_SEEK_REQUEST 只置 seek_request_deferred，不 issue_demux。
+ * - 视频 seek 收尾进 BUFFERING 时不在 seek_wave_complete 内 try_deferred，等缓冲完成通知再试。
+ */
 /* After one SEEKING wave hits seek_demux_target_ms: run at most one follow-up seek (latest seek_pos). */
 static void vid_decode_finish_seek_wave_try_deferred(void)
 {
@@ -73,8 +97,12 @@ static void vid_decode_finish_seek_wave_try_deferred(void)
 /* End of one seek wave once demux time has crossed target (or stall rescue). */
 static void vid_decode_seek_wave_complete(void)
 {
+	vid_decode_seek_clear_enter();
 	if(Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+	{
 		vid_player.state = PLAYER_STATE_BUFFERING;
+		/* 不在此处 try_deferred：视频 seek 后须先完成本轮 BUFFERING，再发下一波 demux，否则会与读包/转码重叠。 */
+	}
 	else
 	{
 		if(vid_player.sub_state & PLAYER_SUB_STATE_RESUME_LATER)
@@ -85,8 +113,9 @@ static void vid_decode_seek_wave_complete(void)
 		}
 		else
 			vid_player.state = PLAYER_STATE_PAUSE;
+
+		vid_decode_finish_seek_wave_try_deferred();
 	}
-	vid_decode_finish_seek_wave_try_deferred();
 }
 
 /* Refresh seek_start_pos_out, flags, speaker, audio flush, and queue demux seek for seek_demux_target_ms. */
@@ -212,6 +241,7 @@ void Vid_decode_thread(void* arg)
 						vid_player.state = PLAYER_STATE_PLAYING;
 						vid_player.sub_state = PLAYER_SUB_STATE_NONE;
 						is_eof = false;
+						vid_player.is_eof = false;
 						natural_eof_session_held = false;
 						is_read_packet_thread_active = false;
 						is_waiting_video_decoder = false;
@@ -604,9 +634,10 @@ void Vid_decode_thread(void* arg)
 						break;
 
 					if(vid_player.state == PLAYER_STATE_PREPARE_SEEKING
-					|| vid_player.state == PLAYER_STATE_SEEKING)
+					|| vid_player.state == PLAYER_STATE_SEEKING
+					|| vid_player.state == PLAYER_STATE_BUFFERING)
 					{
-						/* One seek wave at a time: never re-issue demux while the previous is in flight. */
+						/* 单线 seek：上一波 demux/SEEKING 或任意 BUFFERING 未结束前不叠新 seek（seek_pos 已由 UI 更新，结束后 try_deferred）。 */
 						vid_player.seek_request_deferred = true;
 						break;
 					}
@@ -621,7 +652,10 @@ void Vid_decode_thread(void* arg)
 
 					vid_player.state = PLAYER_STATE_PREPARE_SEEKING;
 					is_eof = false;
+					vid_player.is_eof = false;
 					natural_eof_session_held = false;
+					/* 本 SEEK 事件已转为正式一波；若仍留 true，视频 seek 后 FINISHED_BUFFERING 会误再入队一次。 */
+					vid_player.seek_request_deferred = false;
 					decode_thread_issue_demux_seek(&seek_start_pos);
 
 					break;
@@ -642,6 +676,8 @@ void Vid_decode_thread(void* arg)
 					natural_eof_session_held = true;
 					if(vid_player.media_duration > 0.0)
 						vid_player.media_current_pos = vid_player.media_duration;
+
+					vid_player.seek_request_deferred = false;
 
 					break;
 				}
@@ -664,6 +700,7 @@ void Vid_decode_thread(void* arg)
 						vid_player.seek_queued_pos_ms = 0;
 						vid_player.seek_demux_target_ms = 0;
 						vid_player.seek_stall_rescue_packets = 0;
+						vid_decode_seek_clear_enter();
 
 						if(event == DECODE_THREAD_SHUTDOWN_REQUEST)
 						{
@@ -763,6 +800,7 @@ void Vid_decode_thread(void* arg)
 						vid_player.seek_queued_pos_ms = 0;
 						vid_player.seek_demux_target_ms = 0;
 						vid_player.seek_stall_rescue_packets = 0;
+						vid_decode_seek_clear_enter();
 					}
 
 					vid_player.sub_state = PLAYER_SUB_STATE_NONE;
@@ -811,6 +849,7 @@ void Vid_decode_thread(void* arg)
 			{
 				case READ_PACKET_THREAD_FINISHED_READING_EOF_NOTIFICATION:
 					is_eof = true;
+					vid_player.is_eof = true;
 
 				//Fall through.
 				case READ_PACKET_THREAD_FINISHED_READING_NOTIFICATION:
@@ -832,6 +871,7 @@ void Vid_decode_thread(void* arg)
 						backward_timeout = SEEK_BACKWARD_TIMEOUT;
 						vid_player.seek_stall_rescue_packets = SEEK_STALL_RESCUE_PACKETS;
 						vid_player.state = PLAYER_STATE_SEEKING;
+						vid_decode_seek_mark_enter();
 					}
 					else
 					{
@@ -961,6 +1001,7 @@ void Vid_decode_thread(void* arg)
 					backward_timeout = SEEK_BACKWARD_TIMEOUT;
 					vid_player.seek_stall_rescue_packets = SEEK_STALL_RESCUE_PACKETS;
 					vid_player.state = PLAYER_STATE_SEEKING;
+					vid_decode_seek_mark_enter();
 
 					break;
 				}
@@ -1139,6 +1180,19 @@ void Vid_decode_thread(void* arg)
 				continue;
 			}
 
+			/* 有视频轨但 seek 后长期只有音频包时，原逻辑不在此分支减 wait_count → stall rescue 永远不跑。 */
+			if(vid_player.state == PLAYER_STATE_SEEKING && s_seek_decode_enter_ts != 0)
+			{
+				uint64_t now = osGetTime();
+
+				if((now - s_seek_decode_enter_ts) > VID_SEEK_WALL_TIMEOUT_MS)
+				{
+					DEF_LOG_STRING("SEEKING: wall timeout, forcing seek wave complete");
+					vid_decode_seek_wave_complete();
+					/* 本包仍交给下方正常分发（状态已非 SEEKING 时按 PLAYING/BUFFERING 处理） */
+				}
+			}
+
 			//Handle seek request.
 			if(vid_player.state == PLAYER_STATE_SEEKING && (type == MEDIA_PACKET_TYPE_VIDEO
 			|| !Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime)))
@@ -1165,6 +1219,19 @@ void Vid_decode_thread(void* arg)
 				if(!(vid_player.sub_state & PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT) && vid_player.media_current_pos >= vid_player.seek_demux_target_ms)
 					vid_decode_seek_wave_complete();
 
+				if(!Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+				{
+					if(wait_count > 0)
+						wait_count--;
+					else if(backward_timeout > 0)
+						backward_timeout--;
+					else//Timeout, remove seek backward wait bit.
+						vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT);
+				}
+			}
+
+			if(vid_player.state == PLAYER_STATE_SEEKING && Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+			{
 				if(wait_count > 0)
 					wait_count--;
 				else if(backward_timeout > 0)

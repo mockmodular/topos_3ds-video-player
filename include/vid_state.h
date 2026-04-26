@@ -23,6 +23,12 @@
 #define FORCE_WAIT_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * -2.5)
 #define DELAY_SAMPLES								(uint8_t)(60)
 
+/* A/V sync: drop decoded raw frames when video is behind audio (same as Video_player_for_3DS). */
+#define DROP_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 7)
+#define DROP_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * 0.8)
+#define FORCE_DROP_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * 2.2)
+#define AUDIO_OUT_OF_BUFFER_THRESHOLD_MS			(uint32_t)(500)
+
 #define SEEK_IGNORE_PACKETS							(uint8_t)(5)
 #define SEEK_BACKWARD_TIMEOUT						(uint8_t)(20)
 /* SEEKING 阶段：在 wait_count 已耗尽且非 backward-wait 时，每成功 parse 一包递减；到 0 仍达不到 seek_demux_target_ms 则强制结束该波 seek。须 >0。 */
@@ -253,9 +259,11 @@ typedef struct
 
 	//A/V desync management.
 	uint64_t wait_threshold_exceeded_ts[EYE_MAX];
+	uint64_t drop_threshold_exceeded_ts[EYE_MAX];
 	uint64_t last_video_frame_updated_ts[EYE_MAX];
 	double video_delay_ms[EYE_MAX][DELAY_SAMPLES];
 	double video_delay_avg_ms[EYE_MAX];
+	uint32_t total_dropped_frames;
 
 	//Player.
 	Vid_player_main_state state;
@@ -263,6 +271,7 @@ typedef struct
 	Vid_file file;
 
 	//Media.
+	bool is_eof;
 	double media_duration;
 	double media_current_pos;
 	double seek_pos_cache;
