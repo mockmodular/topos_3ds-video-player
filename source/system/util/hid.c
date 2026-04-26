@@ -625,9 +625,10 @@ static void util_hid_circle_cardinal_from_analog(int16_t dx, int16_t dy,
 
 	if(ay >= ax)
 	{
-		if(dy < -DEF_HID_CPAD_ACTIVATE_AX)
+		/* 3DS circlePosition.dy：正方向为「上推」；与十字键 D-Up = 负侧键约定对齐，故上推用大 dy → out_u。 */
+		if(dy > DEF_HID_CPAD_ACTIVATE_AX)
 			*out_u = true;
-		else if(dy > DEF_HID_CPAD_ACTIVATE_AX)
+		else if(dy < -DEF_HID_CPAD_ACTIVATE_AX)
 			*out_d = true;
 	}
 	else
