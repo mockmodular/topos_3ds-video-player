@@ -3,7 +3,13 @@
 
 #include <stdlib.h>
 
+#include "system/util/hid_types.h"
 #include "vid_seekbar.h"
+
+/** 左右同时：两侧均物理按住，或同一帧两侧均为刚按下 — seek/亮底/息屏计时均不响应。 */
+#define VID_HID_LR_BOTH_BLOCK_SEEK(k) \
+	((bool)((DEF_HID_PHY_HE((k).d_left) && DEF_HID_PHY_HE((k).d_right)) \
+	|| (DEF_HID_PHY_PR((k).d_left) && DEF_HID_PHY_PR((k).d_right))))
 
 #define VID_HID_ENTER_FULL_CFM(k)						(bool)(DEF_HID_PR_EM((k).select, 1) || DEF_HID_HD((k).select))
 #define VID_HID_TOGGLE_PLAYBACK_CFM(k)					(bool)(DEF_HID_PR_EM((k).a, 1) || DEF_HID_HD((k).a))

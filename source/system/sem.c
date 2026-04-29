@@ -273,6 +273,11 @@ void Sem_init(void)
 
 	Util_hid_reset_key_state(HID_KEY_BIT_ALL);
 	Draw_set_refresh_needed(true);
+
+	/* 启动默认：底屏逻辑为「亮」（与 Player 里 Select / 空白区切换的同一开关）。静态 sem_config 曾全零时 bool 为假，必须在此钉死默认。 */
+	sem_config.is_top_lcd_on = true;
+	sem_config.is_bottom_lcd_on = true;
+
 	sem_already_init = true;
 	Sem_get_system_info();
 

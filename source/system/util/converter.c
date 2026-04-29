@@ -901,7 +901,13 @@ uint32_t Util_converter_y2r_yuv420p_to_rgba8888_direct(const uint8_t* yuv420p, u
 	if(!util_y2r_init)
 		goto not_inited;
 
-	if(!yuv420p || !dst || tex_width < width || width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0)
+	/* Y2RU hardware constraint: transfer_unit + transfer_gap < 0x8000.
+	 * transfer_unit = width*4*8, transfer_gap = (tex_width-width)*4*8.
+	 * Combined: tex_width * 32 < 32768  →  tex_width < 1024.
+	 * When tex_width == 1024 the sum exactly hits 0x8000, which is illegal.
+	 * Caller must fall back to the non-direct Y2R path in that case. */
+	if(!yuv420p || !dst || tex_width < width || width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0
+	|| (uint32_t)tex_width * 32u >= 0x8000u)
 		goto invalid_arg;
 
 	memset(&y2r_parameters, 0x0, sizeof(y2r_parameters));

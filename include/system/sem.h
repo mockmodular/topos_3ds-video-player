@@ -49,7 +49,8 @@ typedef struct
 	bool is_eco;					//Whether eco mode is enabled.
 	bool is_wifi_on;				//Whether Wifi is enabled.
 	bool is_top_lcd_on;				//Whether top is enabled.
-	bool is_bottom_lcd_on;			//Whether bottom is enabled.
+	/* 底屏唯一开关：true=亮 false=息。硬件背光见 sem.c Sem_hw_config_thread；Select/空白/自动息屏只改此字段 */
+	bool is_bottom_lcd_on;
 	uint16_t time_to_turn_off_lcd;	//Screen timeout in seconds, 0 to disable it.
 	uint16_t time_to_enter_sleep;	//Sleep timeout in seconds, 0 to disable it.
 	double scroll_speed;			//Scroll sensitivity.

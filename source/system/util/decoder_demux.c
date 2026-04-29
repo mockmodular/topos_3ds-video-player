@@ -15,12 +15,16 @@
 
 #include "3ds.h"
 
-/* Wall-clock cap for avformat_seek_file (FFmpeg interrupt_callback). */
+/* Wall-clock cap for avformat_seek_file / av_read_frame (FFmpeg interrupt_callback). */
 #ifndef DEF_DEMUX_SEEK_INTERRUPT_MS
-#define DEF_DEMUX_SEEK_INTERRUPT_MS ((uint64_t)15000)
+#define DEF_DEMUX_SEEK_INTERRUPT_MS ((uint64_t)8000)
+#endif
+#ifndef DEF_DEMUX_READ_PACKET_INTERRUPT_MS
+#define DEF_DEMUX_READ_PACKET_INTERRUPT_MS ((uint64_t)8000)
 #endif
 
 static bool dd_opened_file[DEF_DECODER_MAX_SESSIONS] = { 0, };
+static volatile bool dd_io_abort[DEF_DECODER_MAX_SESSIONS] = { 0, };
 static uint8_t dd_audio_stream_num[DEF_DECODER_MAX_SESSIONS][DEF_DECODER_MAX_AUDIO_TRACKS] = { 0, };
 static uint8_t dd_video_stream_num[DEF_DECODER_MAX_SESSIONS][DEF_DECODER_MAX_VIDEO_TRACKS] = { 0, };
 
@@ -114,6 +118,7 @@ uint32_t DecoderDemux_open(const char* path, uint8_t* num_of_audio_tracks, uint8
 	*num_of_audio_tracks = audio_index;
 	*num_of_video_tracks = video_index;
 	dd_opened_file[session] = true;
+	dd_io_abort[session] = false;
 
 	return DEF_SUCCESS;
 
@@ -182,14 +187,59 @@ uint16_t DecoderDemux_get_available_packet_num(uint8_t session)
 		return dd_available_cache_packet[session];
 }
 
+typedef struct
+{
+	uint64_t deadline_ms;
+	uint8_t session;
+} DecoderDemuxIntrCtx;
+
+static int DecoderDemux_io_interrupt(void *opaque)
+{
+	DecoderDemuxIntrCtx *ctx = (DecoderDemuxIntrCtx *)opaque;
+
+	if(!ctx || ctx->session >= DEF_DECODER_MAX_SESSIONS)
+		return 0;
+	if(dd_io_abort[ctx->session])
+		return 1;
+	return (osGetTime() >= ctx->deadline_ms) ? 1 : 0;
+}
+
+void DecoderDemux_request_io_abort(uint8_t session)
+{
+	if(session >= DEF_DECODER_MAX_SESSIONS)
+		return;
+	dd_io_abort[session] = true;
+}
+
+void DecoderDemux_clear_io_abort(uint8_t session)
+{
+	if(session >= DEF_DECODER_MAX_SESSIONS)
+		return;
+	dd_io_abort[session] = false;
+}
+
+bool DecoderDemux_io_abort_requested(uint8_t session)
+{
+	if(session >= DEF_DECODER_MAX_SESSIONS)
+		return false;
+	return dd_io_abort[session];
+}
+
 uint32_t DecoderDemux_read_packet(uint8_t session)
 {
 	int32_t ffmpeg_result = 0;
+	AVFormatContext *fmt = NULL;
+	AVIOInterruptCB saved_interrupt = { 0, };
+	DecoderDemuxIntrCtx intr_ctx = { 0, };
 
 	if(session >= DEF_DECODER_MAX_SESSIONS)
 		goto invalid_arg;
 
 	if(!dd_opened_file[session])
+		goto not_inited;
+
+	fmt = dd_format_context[session];
+	if(!fmt)
 		goto not_inited;
 
 	LightLock_Lock(&dd_cache_packet_mutex[session]);
@@ -206,10 +256,22 @@ uint32_t DecoderDemux_read_packet(uint8_t session)
 		goto ffmpeg_api_failed;
 	}
 
+	intr_ctx.deadline_ms = osGetTime() + DEF_DEMUX_READ_PACKET_INTERRUPT_MS;
+	intr_ctx.session = session;
+	saved_interrupt = fmt->interrupt_callback;
+	fmt->interrupt_callback.callback = DecoderDemux_io_interrupt;
+	fmt->interrupt_callback.opaque = &intr_ctx;
+
 	ffmpeg_result = av_read_frame(dd_format_context[session], dd_cache_packet[session][dd_cache_packet_ready_index[session]]);
+
+	fmt->interrupt_callback = saved_interrupt;
+
 	if(ffmpeg_result != 0)
 	{
-		DEF_LOG_RESULT(av_read_frame, false, ffmpeg_result);
+		if(ffmpeg_result == AVERROR_EXIT)
+			DEF_LOG_STRING("av_read_frame interrupted (time limit or abort).");
+		else
+			DEF_LOG_RESULT(av_read_frame, false, ffmpeg_result);
 		goto ffmpeg_api_failed;
 	}
 
@@ -325,22 +387,13 @@ uint32_t DecoderDemux_parse_packet(Media_packet_type* type, uint8_t* packet_inde
 	return route_result;
 }
 
-static int DecoderDemux_seek_interrupt(void *opaque)
-{
-	const uint64_t *deadline = (const uint64_t *)opaque;
-
-	if(!deadline)
-		return 0;
-	return osGetTime() >= *deadline ? 1 : 0;
-}
-
 uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t session)
 {
 	int32_t ffmpeg_result = 0;
 	int32_t ffmpeg_seek_flag = 0;
 	AVFormatContext *fmt = NULL;
-	AVIOInterruptCB saved_interrupt;
-	uint64_t deadline = 0;
+	AVIOInterruptCB saved_interrupt = { 0, };
+	DecoderDemuxIntrCtx intr_ctx = { 0, };
 
 	if(session >= DEF_DECODER_MAX_SESSIONS)
 		goto invalid_arg;
@@ -361,10 +414,11 @@ uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t sess
 	if(flag & MEDIA_SEEK_FLAG_FRAME)
 		ffmpeg_seek_flag |= AVSEEK_FLAG_FRAME;
 
-	deadline = osGetTime() + DEF_DEMUX_SEEK_INTERRUPT_MS;
+	intr_ctx.deadline_ms = osGetTime() + DEF_DEMUX_SEEK_INTERRUPT_MS;
+	intr_ctx.session = session;
 	saved_interrupt = fmt->interrupt_callback;
-	fmt->interrupt_callback.callback = DecoderDemux_seek_interrupt;
-	fmt->interrupt_callback.opaque = &deadline;
+	fmt->interrupt_callback.callback = DecoderDemux_io_interrupt;
+	fmt->interrupt_callback.opaque = &intr_ctx;
 
 	ffmpeg_result = avformat_seek_file(fmt, -1, INT64_MIN, (int64_t)(seek_pos * 1000), INT64_MAX, ffmpeg_seek_flag);
 
@@ -373,7 +427,7 @@ uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t sess
 	if(ffmpeg_result < 0)
 	{
 		if(ffmpeg_result == AVERROR_EXIT)
-			DEF_LOG_STRING("avformat_seek_file interrupted (time limit).");
+			DEF_LOG_STRING("avformat_seek_file interrupted (time limit or abort).");
 		else
 			DEF_LOG_RESULT(avformat_seek_file, false, ffmpeg_result);
 		goto ffmpeg_api_failed;
@@ -402,5 +456,6 @@ void DecoderDemux_free_cache_and_close_format(uint8_t session)
 	dd_available_cache_packet[session] = 0;
 	dd_cache_packet_current_index[session] = 0;
 	dd_cache_packet_ready_index[session] = 0;
+	dd_io_abort[session] = false;
 	avformat_close_input(&dd_format_context[session]);
 }

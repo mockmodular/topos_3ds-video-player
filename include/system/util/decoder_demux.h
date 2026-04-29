@@ -34,6 +34,11 @@ uint32_t DecoderDemux_parse_packet(Media_packet_type* type, uint8_t* packet_inde
 
 uint32_t DecoderDemux_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t session);
 
+/** Request FFmpeg demux I/O (seek/read) to return AVERROR_EXIT ASAP (playback abort / watchdog). */
+void DecoderDemux_request_io_abort(uint8_t session);
+void DecoderDemux_clear_io_abort(uint8_t session);
+bool DecoderDemux_io_abort_requested(uint8_t session);
+
 void DecoderDemux_free_cache_and_close_format(uint8_t session);
 
 #endif

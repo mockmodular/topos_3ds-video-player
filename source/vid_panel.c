@@ -6,6 +6,8 @@
 #include "vid_panel_settings.h"
 #include "vid_state.h"
 #include "vid_cmd.h"
+#include "vid_seek_engine.h"
+#include "vid_screen.h"
 
 #include <citro2d.h>
 #include <citro3d.h>
@@ -70,6 +72,28 @@ static int       s_slider_row    = -1;  /* valid when s_set_drag is 4 or 5 */
 
 /* Player panel seek state: -1 = not seeking, >=0 = current seek-line screen X */
 static int       s_seek_x        = -1;
+
+/* 竖线 X：触屏拖条 / 键盘左右预览时显示竖线，指向用户当前预览的目标位置。
+ * 已提交但仍在 seeking 期间不显示竖线（方块已静止在播放头，竖线没有意义）。
+ * 返回 -1 表示不显示竖线。 */
+static int vp_seek_vertical_line_x(void)
+{
+	/* 触屏底屏拖条：s_seek_x 直接是屏幕 X 像素 */
+	if(s_seek_x >= 0)
+		return s_seek_x;
+
+	/* 触屏全屏拖条 or 键盘/摇杆左右预览：均用 seek_pos_cache */
+	VidSeekEngineView sv = VidSeekEngine_get_view();
+	if(!sv.is_drag_active)
+		return -1;
+	if(vid_player.media_duration <= 0.0)
+		return -1;
+	double r = sv.display_pos_ms / vid_player.media_duration;
+	if(r < 0.0) r = 0.0;
+	if(r > 1.0) r = 1.0;
+	int px = VP_PROGRESS_X_MIN + (int)(r * (double)VP_PROGRESS_TOTAL_W + 0.5);
+	return vp_progress_seek_x(px);
+}
 
 /* FILES：从列表打开失败（非空路径但无法播放） */
 static bool            s_files_play_err_visible = false;
@@ -274,10 +298,11 @@ static void p_draw_progress_bar(double pts, double duration, int seek_x)
                               VP_Z_PROGRESS, filled_w, (float)VP_PROGRESS_H,
                               VP_COL_PROGRESS_FILL);
 
-        float hx = (float)VP_PROGRESS_X_MIN + filled_w - 4.0f;
-        if (hx < (float)VP_PROGRESS_X_MIN)        hx = (float)VP_PROGRESS_X_MIN;
-        if (hx > (float)(VP_PROGRESS_X_MAX - 7))  hx = (float)(VP_PROGRESS_X_MAX - 7);
-        C2D_DrawRectSolid(hx, (float)(VP_PROGRESS_Y - 3), VP_Z_PROGRESS, 8, 9,
+        /* 方块中心与填充末端对齐（即与竖线中心重合）；clamp 中心点而非左边缘。 */
+        float cx = (float)VP_PROGRESS_X_MIN + filled_w;
+        if (cx < (float)VP_PROGRESS_X_MIN) cx = (float)VP_PROGRESS_X_MIN;
+        if (cx > (float)VP_PROGRESS_X_MAX) cx = (float)VP_PROGRESS_X_MAX;
+        C2D_DrawRectSolid(cx - 4.0f, (float)(VP_PROGRESS_Y - 3), VP_Z_PROGRESS, 9, 9,
                           VP_COL_PROGRESS_HEAD);
     }
 
@@ -388,6 +413,8 @@ static void panel_open_file(const char *filename, const char *directory)
         free(vid_player.play_request_pending);
     vid_player.play_request_pending = file_data;
     Util_sync_unlock(&vid_player.play_request_pending_lock);
+
+    vid_player.user_playback_paused = false;
 
     uint32_t result = DEF_ERR_OTHER;
     DEF_LOG_RESULT_SMART(result,
@@ -885,9 +912,16 @@ void Vid_panel_draw_player_chrome_bg(void)
     C2D_DrawRectSolid(0, 0, 0.5f, VP_SCREEN_W, VP_PATH_BAR_H, VP_COL_PATH_BG);
     C2D_DrawRectSolid(0, VP_PATH_BAR_H, 0.5f, VP_SCREEN_W, 1, VP_COL_SEP);
 
-    /* Progress bar + seek line (shared renderer, same visual as draw_player_panel) */
-    p_draw_progress_bar(vid_player.media_current_pos,
-                        vid_player.media_duration, s_seek_x);
+    /* Progress bar + seek line：
+     * 方块/填充条 = media_current_pos（实际播放头，不跳动）；
+     * 竖线       = seek_pos_cache/seek_pos（用户预览/提交目标）。
+     * 分离两者：方块绝不受 seek 状态影响，竖线由 vp_seek_vertical_line_x() 驱动。 */
+    {
+        /* media_duration 与 bar_pts_ms 同为毫秒；须先换算为秒再算 prog。 */
+        p_draw_progress_bar(DEF_UTIL_MS_TO_S_D(vid_player.media_current_pos),
+                            DEF_UTIL_MS_TO_S_D(vid_player.media_duration),
+                            vp_seek_vertical_line_x());
+    }
 
     /* Bottom strip background */
     float fy = (float)(VP_SCREEN_H - VP_FOOTER_H);
@@ -901,8 +935,10 @@ void Vid_panel_draw_player_chrome(void)
     if (!s_tbuf) return;
     C2D_TextBufClear(s_tbuf);
 
-    int is_paused = (vid_player.state != PLAYER_STATE_PLAYING
-                  && vid_player.state != PLAYER_STATE_BUFFERING);
+    int is_paused = (vid_player.state == PLAYER_STATE_IDLE
+                  || vid_player.state == PLAYER_STATE_PREPARE_PLAYING)
+                  ? 1
+                  : (vid_player.user_playback_paused ? 1 : 0);
 
     /* Top-left: basename — always shown when playing (not gated by ui mod). */
     if (vid_player.state != PLAYER_STATE_IDLE && vid_player.file.name[0] != '\0')
@@ -961,15 +997,19 @@ void Vid_panel_go_files(void)
 {
     s_seek_x          = -1;
     s_quick_menu_open = false;
+    VidSeekEngine_cancel_kbd_preview();
     vid_player.panel  = VID_PANEL_FILES;
     vid_player.auto_full_screen_count = 0;
+    Draw_set_refresh_needed(true);
 }
 
 void Vid_panel_go_player(void)
 {
     s_quick_menu_open = false;
+    VidSeekEngine_cancel_kbd_preview();
     vid_player.panel = VID_PANEL_PLAYER;
     vid_player.auto_full_screen_count = 0;
+    Draw_set_refresh_needed(true);
 }
 
 void Vid_panel_toggle_player_files(void)
@@ -985,11 +1025,13 @@ void Vid_panel_go_settings(void)
 {
     s_seek_x               = -1;
     s_quick_menu_open      = false;
+    VidSeekEngine_cancel_kbd_preview();
     s_set_drag             = 0;
     s_slider_row           = -1;
     s_panel_before_setting = vid_player.panel;
     vid_player.panel       = VID_PANEL_SETTING;
     vid_player.auto_full_screen_count = 0;
+    Draw_set_refresh_needed(true);
 }
 
 void Vid_panel_leave_settings(void)
@@ -1025,8 +1067,10 @@ void Vid_panel_back(void)
             break;
         }
         default:
+            VidSeekEngine_cancel_kbd_preview();
             vid_player.panel = VID_PANEL_PLAYER;
             vid_player.auto_full_screen_count = 0;
+            Draw_set_refresh_needed(true);
             break;
     }
 }
@@ -1161,7 +1205,7 @@ void Vid_panel_list_press(int px, int py)
             }
         }
     } else if (vid_player.panel == VID_PANEL_PLAYER) {
-        /* 点主内容区（非 chrome/进度条/上下条带）：与 Select 相同，触发下屏息屏 */
+        /* 点主内容区（非 chrome/进度条/上下条带）：与 Select 相同，切换底屏亮/灭 */
         if (!vp_player_hit_chrome_controls(px, py)) {
             (void)Vid_cmd_push((VidCmd){ .id = VID_CMD_ENTER_FULLSCREEN });
             /* 息屏后路由不再投递 LIST_RELEASE，避免残留 press 状态 */

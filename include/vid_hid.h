@@ -20,7 +20,8 @@ typedef struct
 
 typedef struct
 {
-	bool is_full_screen;
+	/* Player 且底屏息：与 `!Sem_config.is_bottom_lcd_on` 同义，供输入路由；非第二份状态。 */
+	bool player_bottom_off;
 	Vid_player_main_state state;
 	Vid_player_sub_state sub_state;
 	double scroll_speed;

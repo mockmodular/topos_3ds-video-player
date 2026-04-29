@@ -148,7 +148,8 @@ void Vid_main(void)
 						//Update next frame update timestamp.
 						next_ts = (vid_player.next_frame_update_time[i] + vid_player.video_frametime[i]);
 
-						if(current_ts >= (next_ts + (vid_player.video_frametime[i] * 10)))
+						/* 落后播表过多时再对齐时钟；倍数过大易突发连播、与等音频/背压打架，略放宽更稳。 */
+						if(current_ts >= (next_ts + (vid_player.video_frametime[i] * 18)))
 							vid_player.next_frame_update_time[i] = (current_ts + vid_player.video_frametime[i]);
 						else
 							vid_player.next_frame_update_time[i] = next_ts;
@@ -197,17 +198,12 @@ void Vid_main(void)
 		if(i >= vid_player.num_of_video_tracks)
 			break;
 
-		if(vid_player.is_sbs_3d)
-		{
-			//SBS 3D hardcoded for 800x240: each half is 400x240, fills screen exactly.
-			sar_width_ratio = 1;
-			sar_height_ratio = 1;
-		}
-		else
-		{
-			sar_width_ratio = vid_player.video_info[i].sar_width;
-			sar_height_ratio = vid_player.video_info[i].sar_height;
-		}
+		sar_width_ratio = vid_player.video_info[i].sar_width;
+		sar_height_ratio = vid_player.video_info[i].sar_height;
+		if(sar_width_ratio <= 0.0)
+			sar_width_ratio = 1.0;
+		if(sar_height_ratio <= 0.0)
+			sar_height_ratio = 1.0;
 		image_width[i] = vid_player.large_image[image_index[i]][i].image_width * sar_width_ratio * vid_player.video_zoom[i];
 		image_height[i] = vid_player.large_image[image_index[i]][i].image_height * sar_height_ratio * vid_player.video_zoom[i];
 	}
@@ -285,7 +281,7 @@ void Vid_main(void)
 			Util_str_init(&bottom_left_msg);
 			Util_str_init(&bottom_center_msg);
 
-			Draw_screen_ready(DRAW_SCREEN_TOP_LEFT, vid_player.is_full_screen ? DEF_DRAW_BLACK : back_color);
+			Draw_screen_ready(DRAW_SCREEN_TOP_LEFT, Vid_player_top_should_fill_black() ? DEF_DRAW_BLACK : back_color);
 
 			if(vid_player.state != PLAYER_STATE_IDLE)
 			{
@@ -319,7 +315,7 @@ void Vid_main(void)
 
 			if(Draw_is_3d_mode())
 			{
-				Draw_screen_ready(DRAW_SCREEN_TOP_RIGHT, vid_player.is_full_screen ? DEF_DRAW_BLACK : back_color);
+				Draw_screen_ready(DRAW_SCREEN_TOP_RIGHT, Vid_player_top_should_fill_black() ? DEF_DRAW_BLACK : back_color);
 
 
 				if(vid_player.state != PLAYER_STATE_IDLE)

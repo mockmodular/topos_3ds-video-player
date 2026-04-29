@@ -194,6 +194,21 @@ uint32_t Util_decoder_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t sess
 	return DecoderDemux_seek(seek_pos, flag, session);
 }
 
+void Util_decoder_request_io_abort(uint8_t session)
+{
+	DecoderDemux_request_io_abort(session);
+}
+
+void Util_decoder_clear_io_abort(uint8_t session)
+{
+	DecoderDemux_clear_io_abort(session);
+}
+
+bool Util_decoder_io_abort_requested(uint8_t session)
+{
+	return DecoderDemux_io_abort_requested(session);
+}
+
 void Util_decoder_close_file(uint8_t session)
 {
 	if(session >= DEF_DECODER_MAX_SESSIONS)

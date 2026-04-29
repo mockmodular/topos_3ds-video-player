@@ -62,7 +62,10 @@ uint8_t Vid_get_use_hw_color_conversion(void)
 
 void Vid_set_use_hw_color_conversion(uint8_t value)
 {
-	vid_player.use_hw_color_conversion = value;
+	vid_player.use_hw_color_conversion_pending = value;
+	/* 仅完全未占用解码会话时与 active 同步；PREPARE_PLAYING 由解码线程 open 前统一从 pending 拷贝 */
+	if(vid_player.state == PLAYER_STATE_IDLE)
+		vid_player.use_hw_color_conversion = value;
 }
 
 bool Vid_get_use_hw_decoding(void)
@@ -72,11 +75,16 @@ bool Vid_get_use_hw_decoding(void)
 
 void Vid_set_use_hw_decoding(bool value)
 {
-	vid_player.use_hw_decoding = value;
+	vid_player.use_hw_decoding_pending = value;
+	if(vid_player.state == PLAYER_STATE_IDLE)
+		vid_player.use_hw_decoding = value;
 }
 
 void Vid_resume(void)
 {
+	/* 与 Sem `is_bottom_lcd_on` 一致：每次进入可播放/可交互运行态时默认点亮底屏（逻辑亮 + HW 线程随后跟上） */
+	Vid_exit_full_screen();
+
 	vid_player.thread_suspend = false;
 	vid_player.main_run = true;
 	//Reset key state on scene change.
@@ -206,6 +214,7 @@ void Vid_init_media_data(void)
 	vid_player.seek_demux_target_ms = 0;
 	vid_player.seek_start_pos_after_jump = VID_SEEK_JUMP_ANCHOR_UNSET;
 	vid_player.seek_request_deferred = false;
+	vid_player.seek_exec_epoch_start_ms = 0;
 	vid_player.seek_stall_rescue_packets = 0;
 }
 
@@ -285,13 +294,10 @@ void Vid_init_audio_data(void)
 
 static void Vid_init_ui_data(void)
 {
-	vid_player.is_full_screen = false;
 	vid_player.is_waiting_home_menu = false;
 	vid_player.is_setting_volume = false;
 	vid_player.is_setting_seek_duration = false;
 	vid_player.must_resume_after_home_menu = false;
-	vid_player.turn_off_bottom_screen_count = 0;
-	vid_player.bottom_lcd_select_sleep = false;
 
 	{
 		VidPanelCtx panel_ctx = {
@@ -325,15 +331,15 @@ void Vid_init_thread(void* arg)
 	vid_player.seek_bar = Draw_get_empty_image();
 
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.state, sizeof(vid_player.state));
+	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.user_playback_paused, sizeof(vid_player.user_playback_paused));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_setting_seek_duration, sizeof(vid_player.is_setting_seek_duration));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_setting_volume, sizeof(vid_player.is_setting_volume));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_decoding, sizeof(vid_player.use_hw_decoding));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_color_conversion, sizeof(vid_player.use_hw_color_conversion));
+	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_decoding_pending, sizeof(vid_player.use_hw_decoding_pending));
+	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_color_conversion_pending, sizeof(vid_player.use_hw_color_conversion_pending));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_multi_threaded_decoding, sizeof(vid_player.use_multi_threaded_decoding));
 
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.texture_filter_mode, sizeof(vid_player.texture_filter_mode));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.video_scale_mode, sizeof(vid_player.video_scale_mode));
-	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_full_screen, sizeof(vid_player.is_full_screen));
 
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos_cache, sizeof(vid_player.seek_pos_cache));
 	Util_watch_add(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos, sizeof(vid_player.seek_pos));
@@ -358,6 +364,10 @@ void Vid_init_thread(void* arg)
 	DEF_LOG_RESULT_SMART(result, Vid_load_settings(), (result == DEF_SUCCESS), result);
 	Vid_panel_files_sync_after_settings_load();
 	Vid_init_hidden_settings();
+
+	/* 每次启动：底屏固定为「亮」（两态之一）；设置读档后仍保证 Sem 与下屏电源一致 */
+	Vid_exit_full_screen();
+	vid_player.auto_full_screen_count = 0;
 
 	vid_player.thread_run = true;
 	vid_player.thread_suspend = true;
@@ -401,15 +411,15 @@ void Vid_exit_thread(void* arg)
 	threadFree(vid_player.audio_decode_thread);
 
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.state);
+	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.user_playback_paused);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_setting_seek_duration);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_setting_volume);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_decoding);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_color_conversion);
+	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_decoding_pending);
+	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_hw_color_conversion_pending);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.use_multi_threaded_decoding);
 
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.texture_filter_mode);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.video_scale_mode);
-	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.is_full_screen);
 
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos_cache);
 	Util_watch_remove(WATCH_HANDLE_VIDEO_PLAYER, &vid_player.seek_pos);

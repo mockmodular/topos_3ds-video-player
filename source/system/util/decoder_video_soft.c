@@ -505,15 +505,16 @@ void DecoderVideoSoft_get_info(Media_v_info* video_info, uint8_t video_index, ui
 		return;
 
 	sar = av_guess_sample_aspect_ratio(DecoderDemux_format_context(session), DecoderDemux_format_context(session)->streams[DecoderDemux_video_stream_num(session, video_index)], NULL);
-	if(sar.num == 0)
+	/* FFmpeg sample_aspect_ratio = 像素宽高比(num:den)；显示宽(方像素)=coded_w*num/den，高=coded_h。 */
+	if(sar.num == 0 || sar.den == 0)
 	{
 		video_info->sar_width = 1;
 		video_info->sar_height = 1;
 	}
 	else
 	{
-		video_info->sar_width = 1;
-		video_info->sar_height = (double)sar.den / sar.num;
+		video_info->sar_width = (double)sar.num / (double)sar.den;
+		video_info->sar_height = 1.0;
 	}
 
 	video_info->width = util_video_decoder_context[session][video_index]->width;

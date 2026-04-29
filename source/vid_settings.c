@@ -49,6 +49,8 @@ void Vid_init_settings(void)
 	vid_player.disable_video = false;
 	vid_player.use_hw_decoding = true;
 	vid_player.use_hw_color_conversion = VID_HW_CONV_Y2R_X2;
+	vid_player.use_hw_decoding_pending = true;
+	vid_player.use_hw_color_conversion_pending = VID_HW_CONV_Y2R_X2;
 	vid_player.use_multi_threaded_decoding = true;
 	vid_player.num_of_threads = Vid_get_default_num_of_threads();
 }
@@ -213,6 +215,8 @@ uint32_t Vid_load_settings(void)
 		vid_player.sbs_swap_eyes = (strtoul(DEF_STR_NEVER_NULL(&out_data[27]), NULL, 10) != 0);
 	vid_player.use_hw_decoding = ((settings_valid_until > 3) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[3]), NULL, 10) != 0) : true);
 	vid_player.use_hw_color_conversion = ((settings_valid_until > 4) ? (uint8_t)strtoul(DEF_STR_NEVER_NULL(&out_data[4]), NULL, 10) : VID_HW_CONV_Y2R_X2);
+	vid_player.use_hw_decoding_pending = vid_player.use_hw_decoding;
+	vid_player.use_hw_color_conversion_pending = vid_player.use_hw_color_conversion;
 	vid_player.use_multi_threaded_decoding = ((settings_valid_until > 5) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[5]), NULL, 10) != 0) : true);
 	vid_player.volume = ((settings_valid_until > 7) ? (uint16_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[7]), NULL, 10), 0) : 100);
 	vid_player.seek_duration = ((settings_valid_until > 8) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[8]), NULL, 10), 0) : 10);
@@ -251,6 +255,7 @@ uint32_t Vid_load_settings(void)
 
 	if(vid_player.use_hw_color_conversion == VID_HW_CONV_NEON_Y2R)
 		vid_player.use_hw_color_conversion = VID_HW_CONV_Y2R_X2;
+	vid_player.use_hw_color_conversion_pending = vid_player.use_hw_color_conversion;
 
 	for(uint8_t i = 0; i < DEF_UTIL_ARRAY_NUM_OF_ELEMENTS(out_data); i++)
 		Util_str_free(&out_data[i]);
@@ -293,8 +298,8 @@ uint32_t Vid_save_settings(void)
 		(uint8_t)(vid_player.texture_filter_mode != VID_TEX_FILTER_NEAREST));
 	Util_str_format_append(&data, "<1>%" PRIu8 "</1>", (uint8_t)0);
 	Util_str_format_append(&data, "<2>%" PRIu8 "</2>", (uint8_t)0);
-	Util_str_format_append(&data, "<3>%" PRIu8 "</3>", vid_player.use_hw_decoding);
-	Util_str_format_append(&data, "<4>%" PRIu8 "</4>", vid_player.use_hw_color_conversion);
+	Util_str_format_append(&data, "<3>%" PRIu8 "</3>", (uint8_t)vid_player.use_hw_decoding_pending);
+	Util_str_format_append(&data, "<4>%" PRIu8 "</4>", vid_player.use_hw_color_conversion_pending);
 	Util_str_format_append(&data, "<5>%" PRIu8 "</5>", vid_player.use_multi_threaded_decoding);
 	Util_str_format_append(&data, "<6>%" PRIu8 "</6>", (uint8_t)0);
 	Util_str_format_append(&data, "<7>%" PRIu16 "</7>", vid_player.volume);

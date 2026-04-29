@@ -97,7 +97,7 @@ void Vid_hid_enqueue(const Hid_info *key, const VidHidLayout *layout, const VidH
 	(void)L;
 	(void)locks;
 
-	if(rs->is_full_screen)
+	if(rs->player_bottom_off)
 	{
 		if(VID_HID_FULL_EXIT_CFM(*k) || aptShouldJumpToHome())
 			(void)vid_push(VID_CMD_FULLSCREEN_EXIT);
@@ -265,7 +265,7 @@ void Vid_hid_enqueue_seek(const Hid_info *key, const VidHidLayout *layout, const
 	 * vid_panel.c (PANEL_LIST_PRESS / SCROLL / RELEASE).
 	 * This function only handles fullscreen d-pad seek and the legacy
 	 * locks-based seek path for fullscreen mode. */
-	if(rs->is_full_screen)
+	if(rs->player_bottom_off)
 	{
 		if(VID_HID_SEEK_BAR_PRE_CFM(*k, *layout, *locks))
 			(void)vid_push_i(VID_CMD_SEEK_BAR_DRAG, (int32_t)k->touch_x);
@@ -275,33 +275,52 @@ void Vid_hid_enqueue_seek(const Hid_info *key, const VidHidLayout *layout, const
 		{
 			bool pl_r_fire = false;
 			bool pl_l_fire = false;
+			const bool both_lr_held = VID_HID_LR_BOTH_BLOCK_SEEK(*k);
+
+			/* 左右同时按住：不预览、不 RELEASE commit；单侧才走 seek 预览链 */
+			if(both_lr_held)
+				(void)vid_push(VID_CMD_SEEK_KBD_LR_CANCEL_PREVIEW);
+			else if(DEF_HID_PHY_RE(k->d_right) || DEF_HID_PHY_RE(k->d_left))
+				(void)vid_push(VID_CMD_SEEK_KBD_LR_RELEASE);
 
 			vid_hid_key_repeat_tick(k->d_right, &s_pl_seek_right, &pl_r_fire,
 				VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
 			vid_hid_key_repeat_tick(k->d_left, &s_pl_seek_left, &pl_l_fire,
 				VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
 
-			if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
-				(void)vid_push(VID_CMD_SEEK_BUTTON_FWD);
-			else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
-				(void)vid_push(VID_CMD_SEEK_BUTTON_BACK);
+			if(!both_lr_held)
+			{
+				if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
+					(void)vid_push(VID_CMD_SEEK_KBD_LR_PREVIEW_FWD);
+				else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
+					(void)vid_push(VID_CMD_SEEK_KBD_LR_PREVIEW_BACK);
+			}
 		}
 	}
 	else if(rs->panel == VID_PANEL_PLAYER)
 	{
-		/* 十字键左右：短按一步；长按约 300ms 后约 6 次/秒（与列表长按节奏同首延）。 */
+		/* 十字键/摇杆左右：按住只动条与时间预览；松手才 seek。左右同时按住则两侧都不起效。 */
 		bool pl_r_fire = false;
 		bool pl_l_fire = false;
+		const bool both_lr_held = VID_HID_LR_BOTH_BLOCK_SEEK(*k);
+
+		if(both_lr_held)
+			(void)vid_push(VID_CMD_SEEK_KBD_LR_CANCEL_PREVIEW);
+		else if(DEF_HID_PHY_RE(k->d_right) || DEF_HID_PHY_RE(k->d_left))
+			(void)vid_push(VID_CMD_SEEK_KBD_LR_RELEASE);
 
 		vid_hid_key_repeat_tick(k->d_right, &s_pl_seek_right, &pl_r_fire,
 			VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
 		vid_hid_key_repeat_tick(k->d_left, &s_pl_seek_left, &pl_l_fire,
 			VID_HID_NAV_INITIAL_DELAY_MS, VID_HID_PLAYER_SEEK_REPEAT_MS);
 
-		if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
-			(void)vid_push(VID_CMD_SEEK_BUTTON_FWD);
-		else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
-			(void)vid_push(VID_CMD_SEEK_BUTTON_BACK);
+		if(!both_lr_held)
+		{
+			if(DEF_HID_PHY_PR(k->d_right) || pl_r_fire)
+				(void)vid_push(VID_CMD_SEEK_KBD_LR_PREVIEW_FWD);
+			else if(DEF_HID_PHY_PR(k->d_left) || pl_l_fire)
+				(void)vid_push(VID_CMD_SEEK_KBD_LR_PREVIEW_BACK);
+		}
 	}
 
 	(void)layout;

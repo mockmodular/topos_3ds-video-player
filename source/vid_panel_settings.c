@@ -37,13 +37,12 @@ static Sem_screen_mode screen_mode_sem_from_ui(int ui)
 
 void vid_panel_refit_layout_refresh_tex(void)
 {
-    /* Top usable width is 400×240 for both full-screen and non-full in this build. */
-    uint16_t sw = FULL_SCREEN_WIDTH;
+    /* 上屏呈现尺寸与 `VID_PLAYER_TOP_FIT_*` 一致（与底屏亮灭无关）。 */
     uint32_t i;
     uint8_t  bi;
 
     for (i = 0; i < EYE_MAX; i++)
-        Vid_fit_to_screen(sw, FULL_SCREEN_HEIGHT, (Vid_eye)i);
+        Vid_fit_to_screen(VID_PLAYER_TOP_FIT_W, VID_PLAYER_TOP_FIT_H, (Vid_eye)i);
     for (bi = 0; bi < VIDEO_BUFFERS; bi++)
         for (i = 0; i < EYE_MAX; i++)
             Vid_large_texture_set_filter(&vid_player.large_image[bi][i], Vid_effective_use_linear_texture_filter(i));
@@ -226,11 +225,10 @@ static int get_value(VpSettingId id)
             /* Custom UI: 0=on, 1=off */
             return vid_player.auto_dim_5s ? 0 : 1;
         case VP_SETTING_ID_ADV_HW_DECODE:
-            /* 0=SW, 1=HW(auto) — 允许尝试 MVD，由解码层决定是否真走硬解 */
-            return vid_player.use_hw_decoding ? 1 : 0;
+            /* 0=SW, 1=HW — 与存档一致的是 pending（已载入时下一文件才进解码） */
+            return vid_player.use_hw_decoding_pending ? 1 : 0;
         case VP_SETTING_ID_ADV_HW_COLOR: {
-            /* 0=CPU, 1=Y2R(auto)（NEON 等映射到 Y2R UI） */
-            if (vid_player.use_hw_color_conversion == VID_HW_CONV_CPU)
+            if (vid_player.use_hw_color_conversion_pending == VID_HW_CONV_CPU)
                 return 0;
             return 1;
         }

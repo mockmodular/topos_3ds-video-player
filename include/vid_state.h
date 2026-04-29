@@ -18,15 +18,16 @@
 #define MAX_FILE_NAME_LENGTH						(uint16_t)(256)
 #define MAX_PATH_LENGTH								(uint16_t)(8192)
 
-#define WAIT_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 5)
-#define WAIT_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * -1.4)
-#define FORCE_WAIT_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * -2.5)
+/* 视频比音频「超前」多少才开始等：系数更负 → 更少误等、纹理环不易堵死，软解更顺。 */
+#define WAIT_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 6)
+#define WAIT_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * -2.0)
+#define FORCE_WAIT_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * -3.5)
 #define DELAY_SAMPLES								(uint8_t)(60)
 
-/* A/V sync: drop decoded raw frames when video is behind audio (same as Video_player_for_3DS). */
-#define DROP_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 7)
-#define DROP_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * 0.8)
-#define FORCE_DROP_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * 2.2)
+/* A/V sync：画面落后音频时才丢 raw；阈值略放宽，少「解码→立刻丢→再猛解码」的锯齿。 */
+#define DROP_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 11)
+#define DROP_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * 1.35)
+#define FORCE_DROP_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * 3.8)
 #define AUDIO_OUT_OF_BUFFER_THRESHOLD_MS			(uint32_t)(500)
 
 #define SEEK_IGNORE_PACKETS							(uint8_t)(5)
@@ -38,6 +39,9 @@
 
 #define RAM_TO_KEEP_BASE							(uint32_t)(1000 * 1000 * 6)
 #define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(48)
+/** 正常播放：待 convert 的 decoded YUV 帧数超过该值时，软解每产出一帧后短睡，避免 raw 堆很高再被 convert 一口气吃光 → CPU 尖峰。BUFFERING 攒首屏不受影响（此时非 PLAYING）。 */
+#define VID_DECODE_RAW_HIGH_WATER_MARK				(uint16_t)(34)
+#define VID_DECODE_AFTER_FRAME_COOLDOWN_US			(uint64_t)(1500)
 
 //#define NUM_OF_THREADS_MIN							(uint8_t)(1)
 //#define NUM_OF_THREADS_MAX							(uint8_t)(8)
@@ -84,9 +88,9 @@
 
 #define TOP_SCREEN_WIDTH							(uint16_t)(400)
 #define TOP_SCREEN_HEIGHT							(uint16_t)(240)
-#define FULL_SCREEN_WIDTH							(uint16_t)(400)
-#define FULL_SCREEN_HEIGHT							(uint16_t)(240)
-#define NON_FULL_SCREEN_WIDTH						(uint16_t)(400)
+/** 上屏 `Vid_fit_to_screen` 用定数；底屏亮/息见 `Sem_config.is_bottom_lcd_on`。 */
+#define VID_PLAYER_TOP_FIT_W						TOP_SCREEN_WIDTH
+#define VID_PLAYER_TOP_FIT_H						TOP_SCREEN_HEIGHT
 #define ENTER_FULL_SCREEN_TRANSITION_PERIOD			(uint16_t)(180)
 
 //Typedefs.
@@ -167,6 +171,8 @@ typedef enum
 	PLAYER_SUB_STATE_TOO_BIG				= (1 << 2),
 	PLAYER_SUB_STATE_RESUME_LATER			= (1 << 3),
 	PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT		= (1 << 4),
+	/** 视频 seek 波已结束，正处于「为恢复播放而 BUFFERING」；叠新 seek 时可跳过余下缓冲直接开下一波 demux。 */
+	PLAYER_SUB_STATE_POST_SEEK_BUFFERING		= (1 << 5),
 } Vid_player_sub_state;
 
 /* 自然播放到末尾（PLAY_NEXT）时保留：seek 重开会话依赖这些位决定是否 MVD/Y2R。
@@ -244,6 +250,9 @@ typedef struct
 	bool disable_video;
 	bool use_hw_decoding;
 	uint8_t use_hw_color_conversion;	//VID_HW_CONV_CPU/Y2R_X2/NEON_Y2R
+	/** Advance 菜单 HW 选项：已载入文件时只写 pending，下次打开/解码 open 时再拷入上面两字段。 */
+	bool use_hw_decoding_pending;
+	uint8_t use_hw_color_conversion_pending;
 	bool use_multi_threaded_decoding;
 	bool is_sbs_3d;
 	bool sbs_swap_eyes;
@@ -268,6 +277,8 @@ typedef struct
 	//Player.
 	Vid_player_main_state state;
 	Vid_player_sub_state sub_state;
+	/** 用户播控意图：true=希望内容处于暂停（左下角显示 play）；seek/缓冲内层扬声器暂停不改此位。 */
+	bool user_playback_paused;
 	Vid_file file;
 
 	//Media.
@@ -281,6 +292,8 @@ typedef struct
 	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
 	bool seek_request_deferred;
+	/* 当前这波 seek 在解码线程「开始执行」的时刻(osGetTime ms)；合并的 deferred 须晚于该时刻 +100ms 才入队。0 表示未起算。 */
+	uint64_t seek_exec_epoch_start_ms;
 	uint16_t seek_stall_rescue_packets;
 
 	/* 文件列表连续打开：合并为一条 PLAY，仅保留最后一次 malloc 的 Vid_file（解码线程取走）。 */
@@ -314,15 +327,11 @@ typedef struct
 	Media_a_info audio_info[DEF_DECODER_MAX_AUDIO_TRACKS];
 
 	//UI.
-	bool is_full_screen;
 	bool is_waiting_home_menu;
 	bool is_setting_volume;
 	bool is_setting_seek_duration;
 	bool must_resume_after_home_menu;
-	uint32_t turn_off_bottom_screen_count;
 	uint32_t auto_full_screen_count;
-	/* Select 手动关底屏后为 true；再按 Select 或触摸底屏唤醒后清 false（与全屏自动关底区分） */
-	bool bottom_lcd_select_sleep;
 
 	//Buttons (底屏进度条命中区；R/L 肩键菜单已移除)。
 	Draw_image_data seek_bar;

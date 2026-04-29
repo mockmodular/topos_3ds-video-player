@@ -9,6 +9,7 @@
 #include "vid_seekbar.h"
 #include "vid_seek_engine.h"
 #include "vid_panel_layout.h"
+#include "vid_hid_macros.h"
 
 #include <3ds.h>
 
@@ -31,7 +32,7 @@ static void vid_fill_layout(VidHidLayout *out)
 
 static void vid_fill_router_state(VidHidRouterState *out, bool is_new_3ds, double scroll_speed)
 {
-	out->is_full_screen = vid_player.is_full_screen;
+	out->player_bottom_off = Vid_player_top_should_fill_black();
 	out->state = vid_player.state;
 	out->sub_state = vid_player.sub_state;
 	out->scroll_speed = scroll_speed;
@@ -57,7 +58,7 @@ static void Vid_process_hid_cmd_queue(void)
 		{
 			case VID_CMD_FULLSCREEN_EXIT:
 				for(uint32_t i = 0; i < EYE_MAX; i++)
-					Vid_fit_to_screen(NON_FULL_SCREEN_WIDTH, FULL_SCREEN_HEIGHT, i);
+					Vid_fit_to_screen(VID_PLAYER_TOP_FIT_W, VID_PLAYER_TOP_FIT_H, i);
 				Vid_exit_full_screen();
 				Util_hid_reset_key_state(HID_KEY_BIT_ALL);
 				break;
@@ -68,6 +69,7 @@ static void Vid_process_hid_cmd_queue(void)
 				{
 					if(vid_player.file.name[0] != '\0')
 					{
+						vid_player.user_playback_paused = false;
 						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_PLAY_REQUEST,
 						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 					}
@@ -76,6 +78,7 @@ static void Vid_process_hid_cmd_queue(void)
 				|| ((vid_player.sub_state & PLAYER_SUB_STATE_RESUME_LATER) && (vid_player.state == PLAYER_STATE_BUFFERING
 				|| vid_player.state == PLAYER_STATE_PREPARE_SEEKING || vid_player.state == PLAYER_STATE_SEEKING)))
 				{
+					vid_player.user_playback_paused = true;
 					DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_PAUSE_REQUEST,
 					NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 				}
@@ -83,6 +86,7 @@ static void Vid_process_hid_cmd_queue(void)
 				|| (!(vid_player.sub_state & PLAYER_SUB_STATE_RESUME_LATER) && (vid_player.state == PLAYER_STATE_BUFFERING
 				|| vid_player.state == PLAYER_STATE_PREPARE_SEEKING || vid_player.state == PLAYER_STATE_SEEKING)))
 				{
+					vid_player.user_playback_paused = false;
 					DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_RESUME_REQUEST,
 					NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 				}
@@ -90,9 +94,7 @@ static void Vid_process_hid_cmd_queue(void)
 
 			case VID_CMD_ENTER_FULLSCREEN:
 			case VID_CMD_TOUCH_EMPTY_FULLSCREEN:
-				for(uint32_t i = 0; i < EYE_MAX; i++)
-					Vid_fit_to_screen(FULL_SCREEN_WIDTH, FULL_SCREEN_HEIGHT, i);
-				Vid_enter_full_screen(1);
+				Vid_toggle_bottom_lcd_player();
 				Util_hid_reset_key_state(HID_KEY_BIT_ALL);
 				break;
 
@@ -111,14 +113,27 @@ static void Vid_process_hid_cmd_queue(void)
 
 			case VID_CMD_SEEK_BUTTON_FWD:
 				VidSeekEngine_on_step_fwd();
-				if(vid_player.is_full_screen)
-					Vid_exit_full_screen();
 				break;
 
 			case VID_CMD_SEEK_BUTTON_BACK:
 				VidSeekEngine_on_step_back();
-				if(vid_player.is_full_screen)
+				break;
+
+			case VID_CMD_SEEK_KBD_LR_PREVIEW_FWD:
+				VidSeekEngine_on_kbd_lr_preview_fwd();
+				break;
+
+			case VID_CMD_SEEK_KBD_LR_PREVIEW_BACK:
+				VidSeekEngine_on_kbd_lr_preview_back();
+				break;
+
+			case VID_CMD_SEEK_KBD_LR_RELEASE:
+				if(VidSeekEngine_on_kbd_lr_release() && Vid_player_top_should_fill_black())
 					Vid_exit_full_screen();
+				break;
+
+			case VID_CMD_SEEK_KBD_LR_CANCEL_PREVIEW:
+				VidSeekEngine_cancel_kbd_preview();
 				break;
 
 			/* ── Three-panel UI ── */
@@ -246,38 +261,33 @@ void Vid_hid(const Hid_info* key)
 	Sem_get_config(&config);
 	Sem_get_state(&state);
 
-	/* Select：任意面板下立刻关底屏；再按 Select 或触摸底屏唤醒 */
+	/* Select：仅在 Player 面板切换底屏亮/灭（两态）；其它面板不改动底屏以免与列表/设置操作混淆。 */
 	if(DEF_HID_PHY_PR(key->select))
 	{
-		if(config.is_bottom_lcd_on)
-		{
-			config.is_bottom_lcd_on = false;
-			vid_player.bottom_lcd_select_sleep = true;
-		}
-		else
-		{
-			config.is_bottom_lcd_on = true;
-			vid_player.bottom_lcd_select_sleep = false;
-		}
-		Sem_set_config(&config);
-		vid_player.auto_full_screen_count = 0;
-		vid_player.turn_off_bottom_screen_count = 0;
-		Draw_set_refresh_needed(true);
+		if(vid_player.panel == VID_PANEL_PLAYER)
+			Vid_toggle_bottom_lcd_player();
 		Util_hid_reset_key_state(HID_KEY_BIT_SELECT);
 		return;
 	}
 
-	if(vid_player.bottom_lcd_select_sleep && !config.is_bottom_lcd_on)
+	/* Player 且底屏息屏：触摸下屏唤醒；单侧左右键/摇杆按住也亮底（左右同时按住不亮底，与 seek 一致） */
+	if(!config.is_bottom_lcd_on && vid_player.panel == VID_PANEL_PLAYER)
 	{
-		if((DEF_HID_PHY_PR(key->touch) || DEF_HID_PHY_HE(key->touch))
-		&& key->touch_x >= 0 && key->touch_y >= 0
-		&& key->touch_x < VP_SCREEN_W && key->touch_y < VP_SCREEN_H)
+		const bool lr_both    = VID_HID_LR_BOTH_BLOCK_SEEK(*key);
+		const bool lr_wake    = !lr_both && (DEF_HID_PHY_PR(key->d_left) || DEF_HID_PHY_PR(key->d_right)
+			|| DEF_HID_PHY_HE(key->d_left) || DEF_HID_PHY_HE(key->d_right));
+		const bool touch_wake = (DEF_HID_PHY_PR(key->touch) || DEF_HID_PHY_HE(key->touch))
+			&& key->touch_x >= 0 && key->touch_y >= 0
+			&& key->touch_x < VP_SCREEN_W && key->touch_y < VP_SCREEN_H;
+
+		if(touch_wake || lr_wake)
 		{
 			config.is_bottom_lcd_on = true;
 			Sem_set_config(&config);
-			vid_player.bottom_lcd_select_sleep = false;
+			Sem_get_config(&config);
 			Draw_set_refresh_needed(true);
-			return;
+			if(touch_wake)
+				return;
 		}
 	}
 
@@ -299,11 +309,11 @@ void Vid_hid(const Hid_info* key)
 		DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_PAUSE_REQUEST,
 		NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
 
-		if(vid_player.is_full_screen)
+		if(Vid_player_top_should_fill_black())
 		{
-			//Exit full-screen to avoid bottom LCD blackout.
+			//亮底以便从 HOME 返回时背光/UI 一致（唯一开关 → true）
 			for(uint32_t i = 0; i < EYE_MAX; i++)
-				Vid_fit_to_screen(NON_FULL_SCREEN_WIDTH, FULL_SCREEN_HEIGHT, i);
+				Vid_fit_to_screen(VID_PLAYER_TOP_FIT_W, VID_PLAYER_TOP_FIT_H, i);
 
 			Vid_exit_full_screen();
 		}
@@ -331,7 +341,7 @@ void Vid_hid(const Hid_info* key)
 		Util_err_main(key);
 	else
 	{
-		if(!vid_player.is_full_screen && vid_player.panel == VID_PANEL_PLAYER
+		if(config.is_bottom_lcd_on && vid_player.panel == VID_PANEL_PLAYER
 		&& vid_player.state != PLAYER_STATE_IDLE && vid_player.state != PLAYER_STATE_PREPARE_PLAYING)
 		{
 			if(HID_SEEK_BAR_SEL(*key))
@@ -339,11 +349,14 @@ void Vid_hid(const Hid_info* key)
 		}
 
 		//Execute commands via enqueue→process queue.
-		/* 自动 5 秒息屏：仅 Player 下屏 chrome/进度条/拖进度中的触摸，或十字键，才清零计时 */
-		if(!vid_player.is_full_screen && vid_player.panel == VID_PANEL_PLAYER)
+		/* 自动 5 秒息屏：仅 Player 下屏 chrome/进度条/拖进度中的触摸，或十字键，才清零计时；
+		 * 左右键/摇杆单侧按住期间计时保持清零；左右同时按住不计入（与 seek 一致）。 */
+		if(config.is_bottom_lcd_on && vid_player.panel == VID_PANEL_PLAYER)
 		{
-			if(DEF_HID_PHY_PR(key->d_up) || DEF_HID_PHY_PR(key->d_down)
-			|| DEF_HID_PHY_PR(key->d_left) || DEF_HID_PHY_PR(key->d_right))
+			const bool lr_both = VID_HID_LR_BOTH_BLOCK_SEEK(*key);
+			if(!lr_both && (DEF_HID_PHY_PR(key->d_up) || DEF_HID_PHY_PR(key->d_down)
+			|| DEF_HID_PHY_PR(key->d_left) || DEF_HID_PHY_PR(key->d_right)
+			|| DEF_HID_PHY_HE(key->d_left) || DEF_HID_PHY_HE(key->d_right)))
 				vid_player.auto_full_screen_count = 0;
 			else if((DEF_HID_PHY_HE(key->touch) || DEF_HID_PHY_PR(key->touch))
 			&& Vid_panel_player_touch_resets_auto_dim(key->touch_x, key->touch_y))

@@ -318,6 +318,13 @@ void Util_decoder_mvd_skip_image(double* current_pos, uint8_t session);
 uint32_t Util_decoder_seek(uint64_t seek_pos, Media_seek_flag flag, uint8_t session);
 
 /**
+ * @brief Ask blocking demux seek/read to unblock (interrupt_callback). Pair with READ_PACKET_THREAD_ABORT_REQUEST when exiting playback.
+ */
+void Util_decoder_request_io_abort(uint8_t session);
+void Util_decoder_clear_io_abort(uint8_t session);
+bool Util_decoder_io_abort_requested(uint8_t session);
+
+/**
  * @brief Uninitialize decoders and close the file.
  * Do nothing if file is not opened.
  * @param session (in) Session number.
@@ -358,6 +365,9 @@ void Util_decoder_close_file(uint8_t session);
 #define Util_decoder_video_skip_image(...)
 #define Util_decoder_mvd_skip_image(...)
 #define Util_decoder_seek(...) DEF_ERR_DISABLED
+#define Util_decoder_request_io_abort(...)
+#define Util_decoder_clear_io_abort(...)
+#define Util_decoder_io_abort_requested(...) false
 #define Util_decoder_close_file(...)
 
 #endif //DEF_DECODER_VIDEO_AUDIO_API_ENABLE

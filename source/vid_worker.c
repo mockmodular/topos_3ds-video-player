@@ -20,6 +20,15 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "system/util/str.h"
 #include "system/util/util.h"
 
+static void vid_decode_soft_throttle_if_raw_backlog(uint8_t packet_index)
+{
+	if((vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) || vid_player.state != PLAYER_STATE_PLAYING)
+		return;
+
+	if(Util_decoder_video_get_available_raw_image_num(packet_index, DEF_VID_DECORDER_SESSION_ID) > VID_DECODE_RAW_HIGH_WATER_MARK)
+		Util_sleep(VID_DECODE_AFTER_FRAME_COOLDOWN_US);
+}
+
 // RGBA8 Morton x-delta table (pixel_size=4, period 4 per 8 px).
 static const uint16_t s_mvd_ilx[4] = {16, 48, 16, 176};
 
@@ -526,6 +535,9 @@ void Vid_decode_video_thread(void* arg)
 											Vid_update_decoding_delay(time, &skip, packet_index);
 										}
 
+										if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING))
+											vid_decode_soft_throttle_if_raw_backlog(packet_index);
+
 									}
 									else if(result == DEF_ERR_TRY_AGAIN)//Buffer is full.
 									{
@@ -555,6 +567,9 @@ void Vid_decode_video_thread(void* arg)
 
 									Vid_update_decoding_delay(time, &skip, packet_index);
 								}
+
+								if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING))
+									vid_decode_soft_throttle_if_raw_backlog(packet_index);
 							}
 							else if(result != DEF_ERR_NEED_MORE_INPUT)
 							{
@@ -675,7 +690,8 @@ void Vid_convert_thread(void* arg)
 				Util_sleep(DEF_THREAD_INACTIVE_SLEEP_TIME);
 		}
 
-		//If player state is playing or seeking, don't wait for commands.
+		/* 播放中须保持 0：convert 队列平时为空，>0 会每圈多等 wait_us，反而拖慢每帧着色（曾用 1200µs 即属此类）。
+		 * 平滑 CPU 靠解码侧 VID_DECODE_RAW_* 背压 + 音画阈值，勿在此人为加队列等待。 */
 		if((vid_player.state == PLAYER_STATE_PLAYING || vid_player.state == PLAYER_STATE_SEEKING)
 		&& should_convert)
 			timeout_us = 0;
@@ -784,17 +800,17 @@ void Vid_convert_thread(void* arg)
 				Util_sync_unlock(&vid_player.delay_update_lock);
 
 				if(video_delay > FORCE_DROP_THRESHOLD(ft))
-					av_force_drop = true;
-				else if(video_delay > DROP_THRESHOLD(ft))
-				{
-					if(vid_player.drop_threshold_exceeded_ts[packet_index] == 0)
-						vid_player.drop_threshold_exceeded_ts[packet_index] = current_ts;
+				av_force_drop = true;
+			else if(video_delay > DROP_THRESHOLD(ft))
+			{
+				if(vid_player.drop_threshold_exceeded_ts[packet_index] == 0)
+					vid_player.drop_threshold_exceeded_ts[packet_index] = current_ts;
 
-					if((current_ts - vid_player.drop_threshold_exceeded_ts[packet_index]) > DROP_THRESHOLD_ALLOWED_DURATION(ft))
-						av_soft_drop_only = true;
-				}
-				else
-					vid_player.drop_threshold_exceeded_ts[packet_index] = 0;
+				if((current_ts - vid_player.drop_threshold_exceeded_ts[packet_index]) > DROP_THRESHOLD_ALLOWED_DURATION(ft))
+					av_soft_drop_only = true;
+			}
+			else
+				vid_player.drop_threshold_exceeded_ts[packet_index] = 0;
 			}
 			else
 			{
@@ -829,7 +845,14 @@ void Vid_convert_thread(void* arg)
 				double pos = 0;
 
 				if(vid_player.state != PLAYER_STATE_SEEKING && vid_player.state != PLAYER_STATE_PREPARE_SEEKING)
+				{
 					vid_player.total_dropped_frames++;
+					/* PLAYING 下丢帧后 sleep 一帧时间：
+					 * 防止 av_force_drop 持续为 true 时 skip 无睡眠死循环打满 CPU0。
+					 * 每丢一帧等一帧时间，audio 和 video_current_pos 均有机会推进，
+					 * video_delay 可以自然收敛到正常范围。*/
+					Util_sleep(DEF_UTIL_MS_TO_US(vid_player.video_frametime[packet_index]));
+				}
 
 				if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
 				{
@@ -956,13 +979,16 @@ void Vid_convert_thread(void* arg)
 						}
 				else
 				{
-					if(vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2)
-					{
-						Draw_image_data* di2d = &vid_player.large_image[next_store_index][packet_index].images[0];
-						result = Util_converter_y2r_yuv420p_to_rgba8888_direct(yuv_video, (uint8_t*)di2d->c2d.tex->data, (uint16_t)di2d->c2d.tex->width, width, height);
-					}
-					else
+				if(vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2)
+				{
+					Draw_image_data* di2d = &vid_player.large_image[next_store_index][packet_index].images[0];
+					result = Util_converter_y2r_yuv420p_to_rgba8888_direct(yuv_video, (uint8_t*)di2d->c2d.tex->data, (uint16_t)di2d->c2d.tex->width, width, height);
+					/* tex_width==1024 hits Y2RU transfer_unit+gap==0x8000 (illegal); fall back to buffered Y2R. */
+					if(result == DEF_ERR_INVALID_ARG)
 						result = Util_converter_y2r_yuv420p_to_rgba8888(yuv_video, &video, width, height, true);
+				}
+				else
+					result = Util_converter_y2r_yuv420p_to_rgba8888(yuv_video, &video, width, height, true);
 				}
 					}
 					else//Use software color converter.
@@ -1152,27 +1178,27 @@ void Vid_convert_thread(void* arg)
 					}
 					else
 					{
-				if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) && (vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION))
+			if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING) && (vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION))
+			{
+				if(vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2 && !video)
 				{
-					if(vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2)
-					{
-						//y2r*2 2D: Y2R already wrote directly to texture; flush and update subtex.
-						Draw_image_data* di2d = &vid_player.large_image[image_index][packet_index].images[0];
-						C3D_TexFlush(di2d->c2d.tex);
-						di2d->subtex->width  = (uint16_t)width;
-						di2d->subtex->height = (uint16_t)height;
-						di2d->subtex->left   = 0.0f;
-						di2d->subtex->top    = 1.0f;
-						di2d->subtex->right  = (float)width  / (float)di2d->c2d.tex->width;
-						di2d->subtex->bottom = 1.0f - (float)height / (float)di2d->c2d.tex->height;
-						di2d->c2d.subtex     = di2d->subtex;
-						vid_player.large_image[image_index][packet_index].image_width  = width;
-						vid_player.large_image[image_index][packet_index].image_height = height;
-						result = DEF_SUCCESS;
-					}
-					else
-						//NEONy2r 2D: video buf holds full frame; use standard 30-iter tile-row copy.
-						result = Vid_large_texture_set_data(&vid_player.large_image[image_index][packet_index], video, width, height, true);
+					//y2r*2 2D direct path: Y2R wrote directly to texture; flush and update subtex.
+					Draw_image_data* di2d = &vid_player.large_image[image_index][packet_index].images[0];
+					C3D_TexFlush(di2d->c2d.tex);
+					di2d->subtex->width  = (uint16_t)width;
+					di2d->subtex->height = (uint16_t)height;
+					di2d->subtex->left   = 0.0f;
+					di2d->subtex->top    = 1.0f;
+					di2d->subtex->right  = (float)width  / (float)di2d->c2d.tex->width;
+					di2d->subtex->bottom = 1.0f - (float)height / (float)di2d->c2d.tex->height;
+					di2d->c2d.subtex     = di2d->subtex;
+					vid_player.large_image[image_index][packet_index].image_width  = width;
+					vid_player.large_image[image_index][packet_index].image_height = height;
+					result = DEF_SUCCESS;
+				}
+				else
+					//NEON_Y2R, or Y2R_X2 fallback (video buf holds full RGBA frame).
+					result = Vid_large_texture_set_data(&vid_player.large_image[image_index][packet_index], video, width, height, true);
 				}
 			else if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
 			{
