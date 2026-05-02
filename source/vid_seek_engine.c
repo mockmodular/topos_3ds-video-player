@@ -45,7 +45,7 @@ static void seek_engine_submit(void)
 	if(!seek_engine_can_submit())
 		return;
 
-	/* 合法 seek 门闩：未真正开始播放前禁止提交 demux seek（预览仍可改 seek_pos_cache）。 */
+	/* 合法 seek：须已真正开播。有视频时首帧翻入显示管线后 playback_not_started=false；纯音频见 BUFFERING。 */
 	if(vid_player.playback_not_started)
 		return;
 

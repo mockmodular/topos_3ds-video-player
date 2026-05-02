@@ -18,15 +18,14 @@
 #define MAX_FILE_NAME_LENGTH						(uint16_t)(256)
 #define MAX_PATH_LENGTH								(uint16_t)(8192)
 
-/* 视频比音频「超前」多少才开始等：系数更负 → 更少误等、纹理环不易堵死，软解更顺。 */
-#define WAIT_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 6)
-#define WAIT_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * -2.0)
-#define FORCE_WAIT_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * -3.5)
-#define DELAY_SAMPLES								(uint8_t)(60)
+/* 音画同步：按计划翻帧后对「下次翻帧时刻」±DEF_VID_MAIN_LOOP_PERIOD_MS。AV_SYNC_DEADBAND_MS 同 DEF_AV_SYNC_MS。 */
+#define DEF_AV_SYNC_MS							(12.0)
+/* 与 Vid_main 目标节拍一致时约为一圈；用于相对 nominal 的下次翻帧计划微调，避免重复魔数。 */
+#define DEF_VID_MAIN_LOOP_PERIOD_MS				(1000.0 / 60.0)
+#define DEF_AV_SYNC_DEADBAND_MS					(DEF_AV_SYNC_MS)
+#define AV_SYNC_DEADBAND_MS(frametime)			(DEF_AV_SYNC_MS)
 
-/* 音画同步（绘制节拍）：|audio−video| 落在死区内视为对齐，按 nominal frametime 刷新；
- * 画面落后超过死区 → next_frame_update_time=当前时刻，主循环每圈可再翻帧（上限≈LCD 刷新频率）。 */
-#define AV_SYNC_DEADBAND_MS(frametime)				(Util_max_d(12.0, (frametime) * 0.35))
+#define DELAY_SAMPLES								(uint8_t)(60)
 
 #define AUDIO_OUT_OF_BUFFER_THRESHOLD_MS			(uint32_t)(500)
 
@@ -291,7 +290,7 @@ typedef struct
 	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
 	bool seek_request_deferred;
-	/* true=尚未开播。运行时仅通过 VidSeekEngine_mark_playback_not_started()（入队打开命令）置 true；VidSeekEngine_mark_playback_started() 置 false。合法 seek 须 false。初始/复位默认 true（lifecycle）。 */
+	/* true=尚未真正开播（合法 seek 须 false）。有视频：首帧翻入显示管线后由 Vid_draw 置 false；纯音频：首波 BUFFERING 结束由解码线程置 false。入队打开前 mark_playback_not_started()。 */
 	bool playback_not_started;
 	/* 当前这波 seek 在解码线程「开始执行」的时刻(osGetTime ms)；合并的 deferred 须晚于该时刻 +100ms 才入队。0 表示未起算。 */
 	uint64_t seek_exec_epoch_start_ms;

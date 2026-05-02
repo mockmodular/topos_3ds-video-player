@@ -20,7 +20,6 @@
 #include "system/util/err.h"
 #include "system/util/hw_config.h"
 #include "system/util/log.h"
-#include "system/util/speaker.h"
 #include "system/util/watch.h"
 #include "vid_panel.h"
 
@@ -85,12 +84,8 @@ void Vid_main(void)
 					if(!is_at_least_1_buffer_empty//We have all buffers, we can continue.
 					|| is_at_least_1_buffer_full)//At least 1 buffer is full, we must continue or we'll stall.
 					{
-						bool wait = false;
-						bool did_advance = false;
 						double next_ts = 0;
 						double video_delay = 0;
-						double wait_threshold = 0;
-						double force_wait_threshold = 0;
 
 						if(vid_player.num_of_audio_tracks > 0)
 						{
@@ -102,103 +97,74 @@ void Vid_main(void)
 						else
 							video_delay = 0;
 
-						/* video_delay = audio − 画面时间线：正=画面落后音频，负=画面前置。 */
+						/* next_frame_update_time ≤ current_ts：本圈按计划翻帧。再调「下次翻帧计划」：
+						 * video_delay = audio−画面时间线（ms）。画面前置音频 >12ms → 计划延后 1 主循环；
+						 * 画面落后音频 >12ms → 计划提前 1 主循环。 */
 
-						// A/V sync: when to hold video (wait for audio).
-						wait_threshold = WAIT_THRESHOLD(vid_player.video_frametime[i]);
-						force_wait_threshold = FORCE_WAIT_THRESHOLD(vid_player.video_frametime[i]);
+						// Update buffer index.
+						image_index[i] = vid_player.next_draw_index[i];
 
-						if(video_delay < wait_threshold)
-						{
-							if(vid_player.wait_threshold_exceeded_ts[i] == 0)
-								vid_player.wait_threshold_exceeded_ts[i] = current_ts;
-
-							if((current_ts - vid_player.wait_threshold_exceeded_ts[i]) > WAIT_THRESHOLD_ALLOWED_DURATION(vid_player.video_frametime[i]))
-								wait = true;
-						}
+						if((vid_player.next_draw_index[i] + 1) < VIDEO_BUFFERS)
+							vid_player.next_draw_index[i]++;
 						else
-							vid_player.wait_threshold_exceeded_ts[i] = 0;
+							vid_player.next_draw_index[i] = 0;
 
-						if(video_delay < force_wait_threshold)
-							wait = true;
-
-						if(wait && Util_speaker_get_available_buffer_num(DEF_VID_SPEAKER_SESSION_ID) > 0)
+						/* Mirror draw index for right eye: SBS 3D, or mono 2D single track. */
+						if((vid_player.is_sbs_3d || vid_player.num_of_video_tracks == 1) && i == EYE_LEFT)
 						{
-							// Video too fast vs audio: hold frame (same for 2D / dual-eye / SBS).
-						}
-						else
-						{
-							did_advance = true;
-
-							// Update buffer index.
-							image_index[i] = vid_player.next_draw_index[i];
-
-							if((vid_player.next_draw_index[i] + 1) < VIDEO_BUFFERS)
-								vid_player.next_draw_index[i]++;
-							else
-								vid_player.next_draw_index[i] = 0;
-
-							/* Mirror draw index for right eye: SBS 3D, or mono 2D single track. */
-							if((vid_player.is_sbs_3d || vid_player.num_of_video_tracks == 1) && i == EYE_LEFT)
-							{
-								image_index[EYE_RIGHT] = image_index[EYE_LEFT];
-								vid_player.next_draw_index[EYE_RIGHT] = vid_player.next_draw_index[EYE_LEFT];
-							}
-
-							Draw_set_refresh_needed(true);
-							vid_player.vps_cache[i]++;
-							vid_player.last_video_frame_updated_ts[i] = current_ts;
+							image_index[EYE_RIGHT] = image_index[EYE_LEFT];
+							vid_player.next_draw_index[EYE_RIGHT] = vid_player.next_draw_index[EYE_LEFT];
 						}
 
-						/* 下一帧绘制时刻：仅在实际翻帧或有意等待时更新；落后音频时用 current_ts 追帧（每主循环可再翻）。 */
-						if(did_advance)
+						Draw_set_refresh_needed(true);
+						vid_player.vps_cache[i]++;
+						vid_player.last_video_frame_updated_ts[i] = current_ts;
+
+						/* 首帧已提交到本圈显示管线 →「真正开播」，合法 seek 见 VidSeekEngine。 */
+						if(vid_player.playback_not_started
+						&& Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+							VidSeekEngine_mark_playback_started();
+
 						{
-							double ft = vid_player.video_frametime[i];
+						double ft = vid_player.video_frametime[i];
+						double scheduled_next = 0;
 
-							if(vid_player.num_of_audio_tracks > 0 && ft > 0.0)
-							{
-								const double deadband = AV_SYNC_DEADBAND_MS(ft);
+						if(vid_player.num_of_audio_tracks > 0 && ft > 0.0)
+						{
+							next_ts = (vid_player.next_frame_update_time[i] + ft);
 
-								if(video_delay > deadband)
-								{
-									/* 画面落后于音频：尽快翻帧（下一 Vid_main 即可再判定）。 */
-									vid_player.next_frame_update_time[i] = (double)current_ts;
-								}
-								else
-								{
-									next_ts = (vid_player.next_frame_update_time[i] + ft);
-
-									if(current_ts >= (next_ts + (ft * 18)))
-										vid_player.next_frame_update_time[i] = (double)current_ts + ft;
-									else
-										vid_player.next_frame_update_time[i] = next_ts;
-								}
-							}
+							if(current_ts >= (next_ts + (ft * 18)))
+								scheduled_next = (double)current_ts + ft;
 							else
-							{
-								next_ts = (vid_player.next_frame_update_time[i] + vid_player.video_frametime[i]);
-
-								if(current_ts >= (next_ts + (vid_player.video_frametime[i] * 18)))
-									vid_player.next_frame_update_time[i] = (double)current_ts + vid_player.video_frametime[i];
-								else
-									vid_player.next_frame_update_time[i] = next_ts;
-							}
-
-							if((vid_player.is_sbs_3d || vid_player.num_of_video_tracks == 1) && i == EYE_LEFT)
-								vid_player.next_frame_update_time[EYE_RIGHT] = vid_player.next_frame_update_time[EYE_LEFT];
+								scheduled_next = next_ts;
 						}
 						else
 						{
 							next_ts = (vid_player.next_frame_update_time[i] + vid_player.video_frametime[i]);
 
 							if(current_ts >= (next_ts + (vid_player.video_frametime[i] * 18)))
-								vid_player.next_frame_update_time[i] = (double)current_ts + vid_player.video_frametime[i];
+								scheduled_next = (double)current_ts + vid_player.video_frametime[i];
 							else
-								vid_player.next_frame_update_time[i] = next_ts;
-
-							if((vid_player.is_sbs_3d || vid_player.num_of_video_tracks == 1) && i == EYE_LEFT)
-								vid_player.next_frame_update_time[EYE_RIGHT] = vid_player.next_frame_update_time[EYE_LEFT];
+								scheduled_next = next_ts;
 						}
+
+						if(vid_player.num_of_audio_tracks > 0 && ft > 0.0)
+						{
+							if(video_delay < -DEF_AV_SYNC_MS)
+								scheduled_next += DEF_VID_MAIN_LOOP_PERIOD_MS;
+							else if(video_delay > DEF_AV_SYNC_MS)
+							{
+								scheduled_next -= DEF_VID_MAIN_LOOP_PERIOD_MS;
+								if(scheduled_next < (double)current_ts)
+									scheduled_next = (double)current_ts;
+							}
+						}
+
+						vid_player.next_frame_update_time[i] = scheduled_next;
+						}
+
+						if((vid_player.is_sbs_3d || vid_player.num_of_video_tracks == 1) && i == EYE_LEFT)
+							vid_player.next_frame_update_time[EYE_RIGHT] = vid_player.next_frame_update_time[EYE_LEFT];
 					}
 					else
 					{

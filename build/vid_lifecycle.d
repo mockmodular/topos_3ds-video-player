@@ -144,6 +144,7 @@ vid_lifecycle.o: \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_lifecycle.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_decode.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_draw.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/library/include/libavutil/cpu.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h \
@@ -307,6 +308,7 @@ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_worker.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_lifecycle.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_decode.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_draw.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/library/include/libavutil/cpu.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h:

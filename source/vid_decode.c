@@ -950,7 +950,9 @@ void Vid_decode_thread(void* arg)
 						vid_player.state = PLAYER_STATE_PAUSE;
 					}
 
-					VidSeekEngine_mark_playback_started();
+					/* 有视频轨：须主线程首帧翻入显示后才 mark（vid_draw）；纯音频/无有效帧率画面此处放行 seek。 */
+					if(!Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
+						VidSeekEngine_mark_playback_started();
 
 					/* e.g. follow-up seek 入队失败时 seek_request_deferred 仍为 true：缓冲结束后再试一次 */
 					vid_decode_finish_seek_wave_try_deferred();
@@ -1135,7 +1137,9 @@ void Vid_decode_thread(void* arg)
 			//Update current media position.
 			vid_player.media_current_pos = Vid_get_current_media_pos(vid_player.video_current_pos[EYE_LEFT], vid_player.video_current_pos[EYE_RIGHT], vid_player.audio_current_pos);
 
+			/* 兜底：仅无非零帧率视频轨时（纯音频等），缓冲通知若未跑到仍可凭播放头放开 seek；有视频则须首帧展示（vid_draw）。 */
 			if(vid_player.playback_not_started
+			&& !Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime)
 			&& (vid_player.state == PLAYER_STATE_PLAYING || vid_player.state == PLAYER_STATE_PAUSE)
 			&& vid_player.media_current_pos > 1.0)
 				VidSeekEngine_mark_playback_started();

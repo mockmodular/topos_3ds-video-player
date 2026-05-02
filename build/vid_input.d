@@ -142,6 +142,8 @@ vid_input.o: \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seekbar.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_panel_layout.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_hid_macros.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seekbar.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/err.h \
@@ -293,6 +295,8 @@ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_hid.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seekbar.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_panel_layout.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_hid_macros.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seekbar.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/err.h:

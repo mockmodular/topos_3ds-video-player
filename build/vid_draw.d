@@ -154,8 +154,6 @@ vid_draw.o: \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/hw_config_types.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/log.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/log_types.h \
- D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/speaker.h \
- D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/speaker_types.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/watch.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/watch_types.h
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/video_player.h:
@@ -312,7 +310,5 @@ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/hw_config
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/hw_config_types.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/log.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/log_types.h:
-D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/speaker.h:
-D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/speaker_types.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/watch.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/watch_types.h:

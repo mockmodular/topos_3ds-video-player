@@ -136,6 +136,9 @@ vid_panel.o: \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/thread_types.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/util.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_cmd.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_screen.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_state.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/err.h \
@@ -282,6 +285,9 @@ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/sync_type
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/thread_types.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/util.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_cmd.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_screen.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_state.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/draw/draw.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/err.h:

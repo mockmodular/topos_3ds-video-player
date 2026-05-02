@@ -141,6 +141,7 @@ vid_decode.o: \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_worker.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_lifecycle.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_decode.h \
+ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/converter.h \
  D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/converter_types.h \
@@ -297,6 +298,7 @@ D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_screen.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_worker.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_lifecycle.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_decode.h:
+D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/vid_seek_engine.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/sem.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/converter.h:
 D:/3dsvideoplayermock/Topos0.01/topos0.1/topos_0.1/include/system/util/converter_types.h:
