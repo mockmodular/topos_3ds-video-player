@@ -38,7 +38,7 @@
 
 #define RAM_TO_KEEP_BASE							(uint32_t)(1000 * 1000 * 6)
 /* BUFFERING 结束条件：解码器里已积存的 raw 帧数 ≥ 此值（与转码线程里「攒够再播」一致）；buffering 进度条也按该值归一化。 */
-#define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(12)
+#define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(24)
 /** 正常播放：待 convert 的 decoded YUV 帧数超过该值时，软解每产出一帧后短睡，避免 raw 堆很高再被 convert 一口气吃光 → CPU 尖峰。BUFFERING 攒首屏不受影响（此时非 PLAYING）。 */
 #define VID_DECODE_RAW_HIGH_WATER_MARK				(uint16_t)(34)
 #define VID_DECODE_AFTER_FRAME_COOLDOWN_US			(uint64_t)(1500)
