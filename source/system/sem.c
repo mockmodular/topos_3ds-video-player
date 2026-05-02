@@ -44,10 +44,10 @@ static Thread sem_hw_config_thread = NULL;
 
 static const char* sem_model_name[2] = { "O3DS", "N3DS", };
 
-/* 与 CFG 无关：可用 CPU 数 == 4 → N3DS 档，否则 O3DS 档（须已在 Util_init 之后调用）。 */
+/* 与 CFG 无关：启动时冻结的可用核数 == 4 → N3DS 档，否则 O3DS 档（须已在 Util_init 之后调用）。 */
 static Sem_model sem_console_model_from_cpu_cores(void)
 {
-	return (Util_available_cpu_core_count() == 4u) ? DEF_SEM_MODEL_N3DS : DEF_SEM_MODEL_O3DS;
+	return (Util_boot_cpu_core_count() == 4u) ? DEF_SEM_MODEL_N3DS : DEF_SEM_MODEL_O3DS;
 }
 
 bool Sem_query_init_flag(void)
@@ -175,8 +175,8 @@ void Sem_init(void)
 	}
 
 	state.console_model = sem_console_model_from_cpu_cores();
-	DEF_LOG_FORMAT("Model : %s (cpu cores=%" PRIu8 ")", sem_model_name[state.console_model],
-		Util_available_cpu_core_count());
+	DEF_LOG_FORMAT("Model : %s (boot cpu cores=%" PRIu8 ")", sem_model_name[state.console_model],
+		Util_boot_cpu_core_count());
 
 	{
 		Topos_md_bundle bundle = { 0, };

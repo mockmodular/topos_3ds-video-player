@@ -80,7 +80,7 @@ typedef struct
 	char connected_wifi[33];		//Connected network (access point) name (empty string if not connected).
 	char msg[128];					//Preformatted status message.
 	Sem_wifi_signal wifi_signal;	//Wifi signal strength and whether connected to the Internet.
-	Sem_model console_model;		/* N3DS 档=探测到 4 核可用，否则 O3DS 档（非 CFG） */
+	Sem_model console_model;		/* fake 关：由 Util_boot_cpu_core_count==4 定 N/O 档；强制 fake 时为用户所选 */
 	Sem_time time;					//The time.
 } Sem_state;
 
@@ -92,7 +92,7 @@ void Sem_set_config(Sem_config* new_config);
 
 void Sem_get_state(Sem_state* state);
 
-/** Fake model: 255=off（按 CPU 可用核数：4→N3DS 档否则 O3DS 档），0/1=强制 O/N 档。 */
+/** Fake model: 255=off（按 Util_boot_cpu_core_count：4→N3DS 档否则 O3DS 档），0/1=强制 O/N 档。 */
 uint8_t Sem_query_fake_model(void);
 void Sem_set_fake_model(uint8_t fake_model);
 

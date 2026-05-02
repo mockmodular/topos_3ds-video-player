@@ -17,7 +17,7 @@
  *    - seek_queued_pos_ms：仅在本波 demux 发起前由引擎写入，供解码线程冻结为 seek_demux_target_ms。
  *    - seek_request_deferred：管道忙或入队失败时置 true；解码线程自本波 seek 在解码侧开始（PREPARE_SEEKING）起
  *      满 100ms 才把「当前 seek_pos」（始终为最新，中间旧请求丢弃）再入队一次 DECODE_THREAD_SEEK_REQUEST。
- *    - 管道忙：PREPARE_SEEKING / SEEKING / BUFFERING；但 BUFFERING 且仅为 POST_SEEK_BUFFERING 时不视为忙（可叠 seek）。
+ *    - 管道忙：仅 PREPARE_SEEKING / SEEKING；BUFFERING 不视为忙（可立即 submit seek）。
  *
  * 3) 解码线程（不在此文件）
  *    - PREPARE_SEEKING → issue demux；SEEKING 消耗包；收尾后视频进 BUFFERING（可带 POST_SEEK_BUFFERING）；
@@ -56,5 +56,11 @@ void VidSeekEngine_cancel_kbd_preview(void);
 //──Engine → UI────────────────────────────────────────────────────────────────
 //Returns the current display state; safe to call every frame from the draw path.
 VidSeekEngineView VidSeekEngine_get_view(void);
+
+/* 首波缓冲结束、进入可播放态后由解码线程调用，允许「合法 seek」入队。 */
+void VidSeekEngine_mark_playback_started(void);
+
+/* 入队 DECODE_THREAD_PLAY_REQUEST 之前调用：运行时唯一把 playback_not_started 置回 true。 */
+void VidSeekEngine_mark_playback_not_started(void);
 
 #endif //!defined(DEF_VID_SEEK_ENGINE_H)

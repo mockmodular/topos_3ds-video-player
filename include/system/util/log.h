@@ -1,5 +1,57 @@
 #if !defined(DEF_LOG_H)
 #define DEF_LOG_H
+
+#if defined(DEF_NO_LOG) && DEF_NO_LOG
+
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "system/util/err_types.h"
+#include "system/util/log_types.h"
+
+#define Util_log_init()					((uint32_t)(DEF_SUCCESS))
+#define Util_log_exit()					((void)0)
+#define Util_log_query_show_flag()			(false)
+#define Util_log_set_show_flag(flag)			((void)(flag))
+
+#define Util_log_format(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_vformat(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_format_append(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_vformat_append(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_result(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_result_start(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_result_end(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_bool(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_int(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_uint(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_hex(...)				((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_double(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+#define Util_log_save_string(...)			((uint32_t)(DEF_LOG_INDEX_AUTO))
+
+#define DEF_LOG_FORMAT(...)				((void)0)
+#define DEF_LOG_VFORMAT(format, va_arg_list)		((void)0)
+#define DEF_LOG_FORMAT_APPEND(log_index, append_time, ...)	((void)0)
+#define DEF_LOG_VFORMAT_APPEND(log_index, append_time, format, va_arg_list)	((void)0)
+#define DEF_LOG_RESULT(function_name, is_success, result)	((void)0)
+#define DEF_LOG_RESULT_START(function_name)		((void)0)
+#define DEF_LOG_RESULT_END(log_index, is_success, result)	((void)0)
+#define DEF_LOG_RESULT_SMART(result_out, function_call, is_success, log_api_result) \
+	do { (result_out) = (function_call); } while(0)
+#define DEF_LOG_RESULT_SMART_FULL(result_out, function_call, is_success, log_api_result) \
+	do { (result_out) = (function_call); } while(0)
+#define DEF_LOG_BOOL(value)				((void)0)
+#define DEF_LOG_INT(value)				((void)0)
+#define DEF_LOG_UINT(value)				((void)0)
+#define DEF_LOG_HEX(value)				((void)0)
+#define DEF_LOG_DOUBLE(value)				((void)0)
+#define DEF_LOG_STRING(text)				((void)0)
+
+#define Util_log_main(key)				((void)0)
+#define Util_log_draw()				((void)0)
+
+#else /* DEF_NO_LOG */
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -217,4 +269,6 @@ void Util_log_main(const Hid_info* key);
 */
 void Util_log_draw(void);
 
-#endif //!defined(DEF_LOG_H)
+#endif /* DEF_NO_LOG */
+
+#endif /* DEF_LOG_H */

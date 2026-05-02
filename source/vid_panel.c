@@ -416,6 +416,8 @@ static void panel_open_file(const char *filename, const char *directory)
 
     vid_player.user_playback_paused = false;
 
+    VidSeekEngine_mark_playback_not_started();
+
     uint32_t result = DEF_ERR_OTHER;
     DEF_LOG_RESULT_SMART(result,
         Util_queue_add(&vid_player.decode_thread_command_queue,

@@ -676,9 +676,6 @@ void Vid_convert_thread(void* arg)
 
 	while (vid_player.thread_run)
 	{
-		bool drop = false;
-		bool av_force_drop = false;
-		bool av_soft_drop_only = false;
 		uint16_t num_of_cached_raw_images = 0;
 		uint32_t audio_buffer_ms = 0;
 		uint64_t timeout_us = DEF_THREAD_ACTIVE_SLEEP_TIME;
@@ -783,113 +780,8 @@ void Vid_convert_thread(void* arg)
 			audio_buffer_ms = (uint32_t)DEF_UTIL_S_TO_MS_D(audio_buffers_size / 2.0 / playing_ch / vid_player.audio_info[0].sample_rate);
 		}
 
-		/* 仅在正常播放时根据音画差决定是否丢帧；BUFFERING/PAUSE 等态下不得丢，
-		 * 否则 raw 被 skip 掉而永远不进 get_image，画面会卡死只剩音频时间往前走。 */
-		if(vid_player.state == PLAYER_STATE_PLAYING && vid_player.video_frametime[packet_index] != 0)
-		{
-			const double ft = vid_player.video_frametime[packet_index];
-			const uint64_t current_ts = osGetTime();
-
-			if(vid_player.num_of_audio_tracks > 0)
-			{
-				double video_delay = 0;
-
-				Util_sync_lock(&vid_player.delay_update_lock, UINT64_MAX);
-				Vid_update_video_delay((Vid_eye)packet_index);
-				video_delay = vid_player.video_delay_ms[packet_index][DELAY_SAMPLES - 1];
-				Util_sync_unlock(&vid_player.delay_update_lock);
-
-				if(video_delay > FORCE_DROP_THRESHOLD(ft))
-				av_force_drop = true;
-			else if(video_delay > DROP_THRESHOLD(ft))
-			{
-				if(vid_player.drop_threshold_exceeded_ts[packet_index] == 0)
-					vid_player.drop_threshold_exceeded_ts[packet_index] = current_ts;
-
-				if((current_ts - vid_player.drop_threshold_exceeded_ts[packet_index]) > DROP_THRESHOLD_ALLOWED_DURATION(ft))
-					av_soft_drop_only = true;
-			}
-			else
-				vid_player.drop_threshold_exceeded_ts[packet_index] = 0;
-			}
-			else
-			{
-				if(total_delay > FORCE_DROP_THRESHOLD(ft))
-				{
-					av_force_drop = true;
-					total_delay -= ft;
-				}
-				else if(total_delay > DROP_THRESHOLD(ft))
-				{
-					if(vid_player.drop_threshold_exceeded_ts[packet_index] == 0)
-						vid_player.drop_threshold_exceeded_ts[packet_index] = current_ts;
-
-					if((current_ts - vid_player.drop_threshold_exceeded_ts[packet_index]) > DROP_THRESHOLD_ALLOWED_DURATION(ft))
-					{
-						av_soft_drop_only = true;
-						total_delay -= ft;
-					}
-				}
-				else
-					vid_player.drop_threshold_exceeded_ts[packet_index] = 0;
-			}
-
-			drop = (av_force_drop || av_soft_drop_only);
-		}
-
-		/* SEEKING：排空 raw；PLAYING+drop：丢帧追音频。不得在非 PLAYING 下因 drop 误 skip。 */
-		if((vid_player.state == PLAYER_STATE_SEEKING || drop) && vid_player.video_frametime[packet_index] != 0)
-		{
-			if(num_of_cached_raw_images > 0)
-			{
-				double pos = 0;
-
-				if(vid_player.state != PLAYER_STATE_SEEKING && vid_player.state != PLAYER_STATE_PREPARE_SEEKING)
-				{
-					vid_player.total_dropped_frames++;
-					/* PLAYING 下丢帧后 sleep 一帧时间：
-					 * 防止 av_force_drop 持续为 true 时 skip 无睡眠死循环打满 CPU0。
-					 * 每丢一帧等一帧时间，audio 和 video_current_pos 均有机会推进，
-					 * video_delay 可以自然收敛到正常范围。*/
-					Util_sleep(DEF_UTIL_MS_TO_US(vid_player.video_frametime[packet_index]));
-				}
-
-				if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
-				{
-					Util_decoder_mvd_skip_image(&pos, DEF_VID_DECORDER_SESSION_ID);
-					vid_player.video_current_pos[EYE_LEFT] = pos;
-				}
-				else
-				{
-					Util_decoder_video_skip_image(&pos, packet_index, DEF_VID_DECORDER_SESSION_ID);
-					vid_player.video_current_pos[packet_index] = pos;
-				}
-			}
-			else
-			{
-				if(vid_player.state == PLAYER_STATE_SEEKING || vid_player.state == PLAYER_STATE_PREPARE_SEEKING)
-					Util_sleep(5000);
-				else if(vid_player.state == PLAYER_STATE_PLAYING)
-				{
-					if(vid_player.num_of_audio_tracks > 0 && !vid_player.is_eof && vid_player.video_frametime[packet_index] != 0 && audio_buffer_ms <= AUDIO_OUT_OF_BUFFER_THRESHOLD_MS)
-					{
-						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_notification_queue, CONVERT_THREAD_OUT_OF_BUFFER_NOTIFICATION,
-						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
-						Util_sleep(5000);
-					}
-				}
-			}
-
-			osTickCounterUpdate(&conversion_time_counter);
-
-			vid_player.media_current_pos = Vid_get_current_media_pos(vid_player.video_current_pos[EYE_LEFT], vid_player.video_current_pos[EYE_RIGHT], vid_player.audio_current_pos);
-
-			if((packet_index + 1) < vid_player.num_of_video_tracks)
-				packet_index++;
-			else
-				packet_index = 0;
-		}
-		else if(vid_player.state == PLAYER_STATE_PLAYING)
+		/* 已禁用音画丢帧与 SEEKING 下 skip 排空：PLAYING/SEEKING 均走完整 get_image→纹理路径。 */
+		if(vid_player.state == PLAYER_STATE_PLAYING || vid_player.state == PLAYER_STATE_SEEKING)
 		{
 			if(vid_player.num_of_audio_tracks > 0 && !vid_player.is_eof && num_of_cached_raw_images == 0 && vid_player.video_frametime[packet_index] != 0 && audio_buffer_ms <= AUDIO_OUT_OF_BUFFER_THRESHOLD_MS)
 			{
@@ -1237,15 +1129,6 @@ void Vid_convert_thread(void* arg)
 						DEF_LOG_RESULT(Util_decoder_mvd_get_image, false, result);
 					else
 						DEF_LOG_RESULT(Util_decoder_video_get_image, false, result);
-
-					if(result == DEF_ERR_OUT_OF_MEMORY || result == DEF_ERR_OUT_OF_LINEAR_MEMORY)
-					{
-						//Give up on this image on memory allocation failure.
-						if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)
-							Util_decoder_mvd_skip_image(&pos, DEF_VID_DECORDER_SESSION_ID);
-						else
-							Util_decoder_video_skip_image(&pos, packet_index, DEF_VID_DECORDER_SESSION_ID);
-					}
 				}
 
 				if(result == DEF_SUCCESS)

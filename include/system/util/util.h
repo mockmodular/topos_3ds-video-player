@@ -113,8 +113,11 @@ uint32_t Util_check_free_ram(void);
 */
 bool Util_is_core_available(uint8_t core_id);
 
-/** 已初始化的 util 上，统计 0..3 号 CPU 中 thread 探测为可用的数量（用于 N/O 机型档，与 CFG 无关）。 */
+/** 已初始化的 util 上，统计 0..3 号 CPU 中 thread 探测为可用的数量（与 CFG 无关）。 */
 uint8_t Util_available_cpu_core_count(void);
+
+/** Util_init 时探测并冻结的可用核心数；进程内不变。未 init 前保底返回 4。 */
+uint8_t Util_boot_cpu_core_count(void);
 
 /**
  * @brief Sleep thread.

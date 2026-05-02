@@ -8,3 +8,7 @@
 !topos.core0.04.3dsx
 !topos.core0.04.cia
 *.smdh
+
+# Local media / nested vendor git (third_party sources tracked without submodule metadata)
+*.mkv
+third_party/**/.git/

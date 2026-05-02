@@ -88,6 +88,14 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=c++11
 CFLAGS		+= -U__STRICT_ANSI__ -std=c99
 CFLAGS		+= -Wjump-misses-init -Wstrict-prototypes -Wnested-externs -Wmissing-prototypes -Wmissing-variable-declarations
 
+# 必须在顶层定义：子 make(-C build) 不走下方 export 分支，否则 DEF_LOG_* 仍会生成真实调用。
+DEF_NO_LOG		?=	1
+ifneq ($(strip $(DEF_NO_LOG)),0)
+CFLAGS			+=	-DDEF_NO_LOG=1
+# DEF_LOG_* 变为空宏后，原先仅用于日志的 result / 临时变量会触发 -Wunused-*（非错误，默认关掉以免刷屏）
+CFLAGS			+=	-Wno-unused-but-set-variable -Wno-unused-variable
+endif
+
 ASFLAGS		:= $(ARCH)
 LDFLAGS		= -pipe -specs=3dsx.specs $(ARCH) -Wl,-Map,$(notdir $*.map) -z noexecstack
 
@@ -129,6 +137,10 @@ export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+# 1=从目标列表移除 log.c（与顶层 CFLAGS -DDEF_NO_LOG 配套）
+ifneq ($(strip $(DEF_NO_LOG)),0)
+CFILES			:=	$(filter-out log.c,$(CFILES))
+endif
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 PICAFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))

@@ -10,6 +10,7 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "vid_lifecycle.h"
 #include "vid_panel.h"
 #include "vid_decode.h"
+#include "vid_seek_engine.h"
 
 #include <inttypes.h>
 #include <string.h>
@@ -67,8 +68,7 @@ static bool vid_decode_mvd_blocked_real_o3ds_fake_off(void)
 /*
  * 解码线程 seek 约束（与 VidSeekEngine 一致）：
  * - 仅 PREPARE_SEEKING→…→（视频）BUFFERING 这一波内持有 demux 目标 seek_demux_target_ms。
- * - BUFFERING 上收到 DECODE_THREAD_SEEK_REQUEST 一般只置 seek_request_deferred；但若为 POST_SEEK_BUFFERING
- *   （seek 波已完、仅为恢复播放填缓冲），则跳过余下缓冲，立即 PREPARE_SEEKING + issue_demux（新 seek_pos）。
+ * - BUFFERING 上收到 DECODE_THREAD_SEEK_REQUEST：POST_SEEK_BUFFERING 快路径立即下一波；否则 fall through 立即 seek。seek 引擎对 BUFFERING 不 defer。
  * - 视频 seek 收尾进 BUFFERING 时不在 seek_wave_complete 内 try_deferred，等缓冲完成通知再试（叠 seek 除外见上）。
  * - 合并 seek：自 seek_exec_epoch_start_ms（本波在解码线程开始 PREPARE_SEEKING）起满 VID_SEEK_COALESCE_DELAY_MS
  *   才把 seek_request_deferred 用当前 seek_pos 入队；seek_pos 始终最新，中间旧目标丢弃。
@@ -79,6 +79,9 @@ static void vid_decode_finish_seek_wave_try_deferred(void)
 	uint32_t r = DEF_ERR_OTHER;
 
 	if(!vid_player.seek_request_deferred)
+		return;
+
+	if(vid_player.playback_not_started)
 		return;
 
 	if(vid_player.seek_exec_epoch_start_ms != 0
@@ -572,6 +575,7 @@ void Vid_decode_thread(void* arg)
 						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
 
 						//Then play new one, pass the received new_file again.
+						VidSeekEngine_mark_playback_not_started();
 						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_PLAY_REQUEST,
 						new_file, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_NONE), (result == DEF_SUCCESS), result);
 					}
@@ -946,6 +950,8 @@ void Vid_decode_thread(void* arg)
 						vid_player.state = PLAYER_STATE_PAUSE;
 					}
 
+					VidSeekEngine_mark_playback_started();
+
 					/* e.g. follow-up seek 入队失败时 seek_request_deferred 仍为 true：缓冲结束后再试一次 */
 					vid_decode_finish_seek_wave_try_deferred();
 
@@ -1031,33 +1037,25 @@ void Vid_decode_thread(void* arg)
 				for(uint8_t i = 0; i < vid_player.num_of_video_tracks; i++)
 					num_of_threads = Util_max(num_of_threads, ((vid_player.video_info[i].thread_type == MEDIA_THREAD_TYPE_FRAME) ? vid_player.num_of_threads : 0));
 
-				/* seek 开始前清除 A/V sync 状态，防止 seek 后 video_delay 虚高触发 av_force_drop 死循环。
+				/* seek 开始前清除环形帧缓存状态，保证 Vid_update_video_delay / 绘制线程用的
+				 * video_current_pos、环形 PTS 与 seek 目标一致。
 				 *
-				 * 根因1（原始）：CLEAR_CACHE_REQUEST 清空 raw images 后，convert_thread 在 SEEKING
-				 * 状态没有 raw images 可 skip，video_current_pos 停留在 seek 前的旧位置。
-				 * seek 完成进入 PLAYING 时 vpts=-1，video_delay 用旧 video_current_pos 计算，
-				 * 结果 = 目标 - 旧位置 >> FORCE_DROP_THRESHOLD → av_force_drop 死循环。
+				 * 根因：CLEAR_CACHE_REQUEST 清空 raw images 后，convert_thread 在 SEEKING 状态
+				 * 若 video_current_pos 仍停在 seek 前，进入 PLAYING 后音画差分计算会失真。
 				 *
-				 * 根因2（滑动窗口残留）：video_delay_ms[] 是 DELAY_SAMPLES 长的滑动窗口，
-				 * POST_SEEK_BUFFERING 阶段 convert_thread 若因 50ms sleep 错过 BUFFERING 分支
-				 * 里的 Vid_init_desync_data()，旧的正延迟历史会在 seek 后第一帧前仍驻留数组，
-				 * 导致后续帧进入 PLAYING 时累计均值虚高，同样触发 av_force_drop 死循环。
-				 *
-				 * 修复（此处 convert_thread/decode_video_thread 均已暂停，线程安全）：
+				 * 修复：
 				 * 1. next_store_index = next_draw_index → buffer_health=0 → buffered_ms=0
 				 * 2. video_buffer_pts = -1 → Vid_update_video_delay 走 else 分支
-				 * 3. video_current_pos = seek_demux_target_ms → video_delay ≈ 0
-				 * 4. video_delay_ms[] 全清零 → 滑动窗口无旧值残留 */
+				 * 3. video_current_pos = seek_demux_target_ms
+				 *
+				 * 此处 convert_thread / decode_video_thread 均已暂停，仅 draw_thread 可能
+				 * 并发读 next_draw_index（只读，安全）。*/
 				{
 					Util_sync_lock(&vid_player.delay_update_lock, UINT64_MAX);
 					for(uint32_t i = 0; i < EYE_MAX; i++)
 					{
 						vid_player.next_store_index[i] = vid_player.next_draw_index[i];
 						vid_player.video_current_pos[i] = vid_player.seek_demux_target_ms;
-						vid_player.wait_threshold_exceeded_ts[i] = 0;
-						vid_player.drop_threshold_exceeded_ts[i] = 0;
-						for(uint16_t k = 0; k < DELAY_SAMPLES; k++)
-							vid_player.video_delay_ms[i][k] = 0;
 					}
 					for(uint8_t b = 0; b < VIDEO_BUFFERS; b++)
 						for(uint32_t e = 0; e < EYE_MAX; e++)
@@ -1136,6 +1134,11 @@ void Vid_decode_thread(void* arg)
 
 			//Update current media position.
 			vid_player.media_current_pos = Vid_get_current_media_pos(vid_player.video_current_pos[EYE_LEFT], vid_player.video_current_pos[EYE_RIGHT], vid_player.audio_current_pos);
+
+			if(vid_player.playback_not_started
+			&& (vid_player.state == PLAYER_STATE_PLAYING || vid_player.state == PLAYER_STATE_PAUSE)
+			&& vid_player.media_current_pos > 1.0)
+				VidSeekEngine_mark_playback_started();
 
 			//If file does NOT have normal videos, update bar pos to see if the position has changed
 			//so that we can update the screen when it gets changed.

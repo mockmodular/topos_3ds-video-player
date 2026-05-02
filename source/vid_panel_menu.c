@@ -37,7 +37,7 @@
 #include "system/util/util.h"
 #include "video_player.h"
 
-/* CPU 占用条：仅在布局有效化时读一次可用核数（2→只画 C0 C1；否则画 C0–C3），非每帧。 */
+/* CPU 占用条：按 Util_init 冻结的核心数（2→只画 C0 C1；否则画 C0–C3），非每帧。 */
 static bool s_cpu_bar_layout_ready;
 static int  s_cpu_bar_core_slots; /* 2 或 4 */
 
@@ -147,7 +147,7 @@ void Vid_panel_player_draw_status(uint32_t color,
 
 		if(!s_cpu_bar_layout_ready)
 		{
-			s_cpu_bar_core_slots = (Util_available_cpu_core_count() == 2) ? 2 : 4;
+			s_cpu_bar_core_slots = (Util_boot_cpu_core_count() == 2) ? 2 : 4;
 			s_cpu_bar_layout_ready = true;
 		}
 		k_draw_max = s_cpu_bar_core_slots;
@@ -163,11 +163,6 @@ void Vid_panel_player_draw_status(uint32_t color,
 			diag_heap_tot_kb  = (mi.uordblks + mi.fordblks) / 1024;
 			for(k = 0; k < k_draw_max; k++)
 			{
-				if(!Util_is_core_available((uint8_t)k))
-				{
-					diag_c[k] = 0.0;
-					continue;
-				}
 				{
 					double v = (double)Util_cpu_usage_get_cpu_usage((uint8_t)k);
 					diag_c[k] = isnan(v) ? 0.0 : v;

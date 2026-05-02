@@ -24,10 +24,10 @@
 #define FORCE_WAIT_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * -3.5)
 #define DELAY_SAMPLES								(uint8_t)(60)
 
-/* A/V sync：画面落后音频时才丢 raw；阈值略放宽，少「解码→立刻丢→再猛解码」的锯齿。 */
-#define DROP_THRESHOLD_ALLOWED_DURATION(frametime)	(double)(frametime * 11)
-#define DROP_THRESHOLD(frametime)					(double)(Util_max_d(20, frametime) * 1.35)
-#define FORCE_DROP_THRESHOLD(frametime)				(double)(Util_max_d(20, frametime) * 3.8)
+/* 音画同步（绘制节拍）：|audio−video| 落在死区内视为对齐，按 nominal frametime 刷新；
+ * 画面落后超过死区 → next_frame_update_time=当前时刻，主循环每圈可再翻帧（上限≈LCD 刷新频率）。 */
+#define AV_SYNC_DEADBAND_MS(frametime)				(Util_max_d(12.0, (frametime) * 0.35))
+
 #define AUDIO_OUT_OF_BUFFER_THRESHOLD_MS			(uint32_t)(500)
 
 #define SEEK_IGNORE_PACKETS							(uint8_t)(5)
@@ -38,7 +38,8 @@
 #define VID_SEEK_JUMP_ANCHOR_UNSET					(-1.0)
 
 #define RAM_TO_KEEP_BASE							(uint32_t)(1000 * 1000 * 6)
-#define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(48)
+/* BUFFERING 结束条件：解码器里已积存的 raw 帧数 ≥ 此值（与转码线程里「攒够再播」一致）；buffering 进度条也按该值归一化。 */
+#define VID_FIXED_RESTART_PLAYBACK_THRESHOLD		(uint16_t)(12)
 /** 正常播放：待 convert 的 decoded YUV 帧数超过该值时，软解每产出一帧后短睡，避免 raw 堆很高再被 convert 一口气吃光 → CPU 尖峰。BUFFERING 攒首屏不受影响（此时非 PLAYING）。 */
 #define VID_DECODE_RAW_HIGH_WATER_MARK				(uint16_t)(34)
 #define VID_DECODE_AFTER_FRAME_COOLDOWN_US			(uint64_t)(1500)
@@ -268,11 +269,9 @@ typedef struct
 
 	//A/V desync management.
 	uint64_t wait_threshold_exceeded_ts[EYE_MAX];
-	uint64_t drop_threshold_exceeded_ts[EYE_MAX];
 	uint64_t last_video_frame_updated_ts[EYE_MAX];
 	double video_delay_ms[EYE_MAX][DELAY_SAMPLES];
 	double video_delay_avg_ms[EYE_MAX];
-	uint32_t total_dropped_frames;
 
 	//Player.
 	Vid_player_main_state state;
@@ -292,6 +291,8 @@ typedef struct
 	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
 	bool seek_request_deferred;
+	/* true=尚未开播。运行时仅通过 VidSeekEngine_mark_playback_not_started()（入队打开命令）置 true；VidSeekEngine_mark_playback_started() 置 false。合法 seek 须 false。初始/复位默认 true（lifecycle）。 */
+	bool playback_not_started;
 	/* 当前这波 seek 在解码线程「开始执行」的时刻(osGetTime ms)；合并的 deferred 须晚于该时刻 +100ms 才入队。0 表示未起算。 */
 	uint64_t seek_exec_epoch_start_ms;
 	uint16_t seek_stall_rescue_packets;

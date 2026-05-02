@@ -70,6 +70,7 @@ static void Vid_process_hid_cmd_queue(void)
 					if(vid_player.file.name[0] != '\0')
 					{
 						vid_player.user_playback_paused = false;
+						VidSeekEngine_mark_playback_not_started();
 						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.decode_thread_command_queue, DECODE_THREAD_PLAY_REQUEST,
 						NULL, QUEUE_OP_TIMEOUT_US, QUEUE_OPTION_DO_NOT_ADD_IF_EXIST), (result == DEF_SUCCESS), result);
 					}

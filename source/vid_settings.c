@@ -21,15 +21,8 @@
 
 uint8_t Vid_get_default_num_of_threads(void)
 {
-	/* 按 Util_init 探测到的可用核心数，与 Sem/Fake 机型无关。
-	 * 新机四核全可用 → 3 线程；老机两核 → 2 线程。 */
-	uint8_t n = 0;
-	for (uint8_t i = 0; i < 4; i++)
-	{
-		if (Util_is_core_available(i))
-			n++;
-	}
-	if (n >= 4)
+	/* 按 Util_init 时冻结的核心数，与 Sem/Fake 机型无关。 */
+	if (Util_boot_cpu_core_count() == 4)
 		return NUM_OF_THREADS_N3DS;
 	return NUM_OF_THREADS_O3DS;
 }

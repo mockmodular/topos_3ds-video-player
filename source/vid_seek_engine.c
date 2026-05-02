@@ -20,17 +20,11 @@ static bool seek_engine_can_submit(void)
 	return !(vid_player.state == PLAYER_STATE_IDLE || vid_player.state == PLAYER_STATE_PREPARE_PLAYING);
 }
 
-/* 与 vid_decode DECODE_THREAD_SEEK_REQUEST 一致：这些状态下不叠新 demux。
- * 例外：BUFFERING 且仅为 POST_SEEK_BUFFERING（seek 波后填缓冲）时允许再入队，解码线程会截断缓冲。 */
+/* 与 vid_decode DECODE_THREAD_SEEK_REQUEST 一致：仅 PREPARE_SEEKING/SEEKING 叠 seek 时 defer；BUFFERING 不 busy。 */
 static bool seek_engine_seek_busy(void)
 {
-	if(vid_player.state == PLAYER_STATE_BUFFERING
-	&& (vid_player.sub_state & PLAYER_SUB_STATE_POST_SEEK_BUFFERING))
-		return false;
-
 	return vid_player.state == PLAYER_STATE_PREPARE_SEEKING
-	    || vid_player.state == PLAYER_STATE_SEEKING
-	    || vid_player.state == PLAYER_STATE_BUFFERING;
+	    || vid_player.state == PLAYER_STATE_SEEKING;
 }
 
 /* 步进基准：管道内已有「用户选定」的 seek_pos 时（含 deferred / seek 后填缓冲 BUFFERING）应相对 seek_pos 累加，避免相对 media 双计。 */
@@ -49,6 +43,10 @@ static void seek_engine_submit(void)
 	uint32_t result = DEF_ERR_OTHER;
 
 	if(!seek_engine_can_submit())
+		return;
+
+	/* 合法 seek 门闩：未真正开始播放前禁止提交 demux seek（预览仍可改 seek_pos_cache）。 */
+	if(vid_player.playback_not_started)
 		return;
 
 	if(vid_player.media_duration > 0.0)
@@ -79,6 +77,17 @@ static void seek_engine_submit(void)
 			vid_player.seek_request_deferred = true;
 		}
 	}
+}
+
+void VidSeekEngine_mark_playback_started(void)
+{
+	vid_player.playback_not_started = false;
+}
+
+/* 将 playback_not_started 置 true 的唯一实现体。调用点：入队打开、Lifecycle 的 init/exit 复位。 */
+void VidSeekEngine_mark_playback_not_started(void)
+{
+	vid_player.playback_not_started = true;
 }
 
 static void seek_engine_clamp_seek_pos_cache(void)

@@ -68,6 +68,8 @@ void* (*malloc_heap)(size_t size) = malloc_heap_only;
 
 static bool util_init = false;
 static bool util_is_core_available[4] = { 0, };
+/** Util_init 末尾写入真实探测值；未 init 前读 API 保底为 4（极少路径）。 */
+static uint8_t util_boot_cpu_core_count = 4;
 static LightLock util_linear_alloc_mutex = 1;//Initially unlocked state.
 static LightLock util_malloc_mutex = 1;//Initially unlocked state.
 
@@ -233,7 +235,7 @@ long sysconf(int name)
 	{
 		if(util_init)
 		{
-			uint8_t n = Util_available_cpu_core_count();
+			uint8_t n = util_boot_cpu_core_count;
 			if(name == _SC_NPROCESSORS_CONF)
 				return (n == 4) ? 4 : 2;
 			if(name == _SC_NPROCESSORS_ONLN)
@@ -529,6 +531,13 @@ uint32_t Util_init(void)
 		}
 
 		threadFree(thread);
+	}
+
+	util_boot_cpu_core_count = 0;
+	for(uint8_t i = 0; i < 4; i++)
+	{
+		if(util_is_core_available[i])
+			util_boot_cpu_core_count++;
 	}
 
 	util_init = true;
@@ -933,6 +942,13 @@ uint8_t Util_available_cpu_core_count(void)
 			n++;
 	}
 	return n;
+}
+
+uint8_t Util_boot_cpu_core_count(void)
+{
+	if(!util_init)
+		return 4;
+	return util_boot_cpu_core_count;
 }
 
 void Util_sleep(uint64_t us)

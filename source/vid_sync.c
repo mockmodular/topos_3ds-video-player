@@ -7,7 +7,6 @@ void Vid_init_desync_data(void)
 	for(uint32_t i = 0; i < EYE_MAX; i++)
 	{
 		vid_player.wait_threshold_exceeded_ts[i] = 0;
-		vid_player.drop_threshold_exceeded_ts[i] = 0;
 		vid_player.last_video_frame_updated_ts[i] = 0;
 		vid_player.video_delay_avg_ms[i] = 0;
 		for(uint16_t k = 0; k < DELAY_SAMPLES; k++)

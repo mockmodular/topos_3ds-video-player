@@ -13,6 +13,7 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 #include "vid_lifecycle.h"
 #include "vid_decode.h"
 #include "vid_draw.h"
+#include "vid_seek_engine.h"
 
 #include <inttypes.h>
 #include <string.h>
@@ -43,7 +44,7 @@ void Vid_init_thread(void* arg);
 void Vid_exit_thread(void* arg);
 
 //Variables.
-Vid_player vid_player = { 0, };
+Vid_player vid_player = { .playback_not_started = true };
 //Code.
 bool Vid_query_init_flag(void)
 {
@@ -167,6 +168,7 @@ void Vid_exit(bool draw)
 
 	//Reset everything.
 	memset(&vid_player, 0x00, sizeof(Vid_player));
+	VidSeekEngine_mark_playback_not_started();
 
 	DEF_LOG_STRING("Exited.");
 }
@@ -188,7 +190,6 @@ static void Vid_init_variable(void)
 void Vid_init_debug_view_data(void)
 {
 	vid_player.previous_ts = 0;
-	vid_player.total_dropped_frames = 0;
 
 	for(uint8_t i = 0; i < DEBUG_GRAPH_TEMP_ELEMENTS; i++)
 		vid_player.frame_list[i] = NULL;
@@ -201,6 +202,7 @@ static void Vid_init_player_data(void)
 	memset(vid_player.file.name, 0x0, sizeof(vid_player.file.name));
 	memset(vid_player.file.directory, 0x0, sizeof(vid_player.file.directory));
 	vid_player.file.index = 0;
+	VidSeekEngine_mark_playback_not_started();
 }
 
 void Vid_init_media_data(void)
