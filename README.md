@@ -1,10 +1,15 @@
 Releasing **topos**, a deep fork of [Core_2_Extreme Video_player_for_3DS](https://github.com/Core-2-Extreme/Video_player_for_3DS). This is not a small-patch fork — almost every core module has been rewritten, simplified, or replaced. The architecture, render pipeline, thread model, and UI have all been redesigned from the ground up. After fixing more bugs than I care to count and pushing the hardware about as far as I think it can go, it's ready to share.
 
 GitHub:
-https://github.com/mockmodular/topos_3ds-video-player/releases/tag/v0.12.0
-https://github.com/mockmodular/topos_3ds-video-player/tree/v0.12.0
+https://github.com/mockmodular/topos_3ds-video-player/releases/tag/0.12.3.1
+https://github.com/mockmodular/topos_3ds-video-player
 
+202605020855 news I have tested this software and found that implementing SBS video playback on the O3DS is very difficult. I'm not entirely sure — it's possible that further, more advanced 'perfect' optimization could enable SBS video playback on the O3DS, but I haven't achieved that yet. With my current implementation, SBS playback on the O3DS suffers from slightly weaker performance, making smooth playback impossible. The video always falls behind the audio, and I have found it very difficult to resolve this issue. However, this software's SBS 3D playback on the N3DS is perfect. — My apologies for the inconvenience.
 
+so this software for now only recommend for n3ds ......
+
+and for now 0.12.3 i fix many bug, so this software for now is more stable than before
+---
 
 
 ## What's included in the release
