@@ -164,6 +164,55 @@ The 3D video playback quality — especially H.264 SBS 800×240 video on the New
 
 
 
+Version 1.12.3.1
+
+This software is now almost exclusively suited for the N3DS, particularly for the need to play 3D SBS videos.
+
+It turns out that getting the O3DS to smoothly play MPEG2 SBS videos seems to be quite difficult. My original claim that the O3DS could smoothly play MPEG2 SBS videos was incorrect — I hadn't done sufficient testing at the time. In fact, I have never actually managed to get the O3DS to smoothly play MPEG2 SBS 3D videos. I apologize for that.(I do believe there may exist some magical optimization out there that could allow the O3DS, with its meager CPU, to software-decode MPEG2-encoded video and stably play 800×240 SBS 3D video at 24fps. I genuinely think it's possible — there's likely still room for optimization. But I'm a bit tired, and honestly, it feels like a distant dream at this point... it really does feel just out of reach. So let's leave it here for now... for now.)
+
+However, smooth hardware-decoded H.264 800×240 SBS 3D video playback in RGB888 (not RGB565) on the N3DS has been achieved, with very low CPU usage (only CPU core 0 is used at roughly 50%, with the other cores idle).
+
+The script for generating SBS videos has also been slightly updated and is included in the release. Since MPEG2 SBS 3D video playback on the O3DS is not smooth, only N3DS playback of H.264 800×240 SBS 3D video is recommended, and accordingly only the H.264 encoding script is recommended for this purpose.
+
+"%FFMPEG%" -y -stats -stats_period 1 -i "%FILE_IN%" -filter_complex "[0:v]setsar=2/1,split[L][R];[L]crop=iw/2:ih:0:0[Lh];[R]crop=iw/2:ih:iw/2:0[Rh];[Lh]crop=min(iw\,ih*400/240/sar):ih[Lc];[Rh]crop=min(iw\,ih*400/240/sar):ih[Rc];[Lc][Rc]hstack[Vs];[Vs]format=yuv420p16le,zscale=w=800:h=240:m=bt709:min=bt709:filter=spline36,format=yuv420p,setsar=1[V]" -map "[V]" -map "0:a?" -sws_dither ed -c:v libx264 -preset slow -crf 16 -profile:v high -level 3.1 -fps_mode cfr -x264-params "aq-mode=3:aq-strength=1.0:qcomp=0.65:ref=4:bframes=4:no-fast-pskip=1" -color_primaries bt709 -color_trc bt709 -colorspace bt709 -metadata:s:v:0 stereo_mode=mono -c:a aac -b:a 128k -ac 2 -ar 48000 "%FILE_OUT%"
+
+I've fixed quite a few bugs, and the software now appears to run reasonably well with relatively few remaining issues. The following is an incomplete list of recent changes:
+
+
+
+Convert pipeline — Removed A/V-driven raw drops and SEEKING skip-drain in the convert thread. PLAYING and SEEKING now always take the full get_image → texture path; drop-frame macros/counters tied to convert drops are gone.
+
+Display-side A/V sync — Replaced the older separate “ahead/behind” wait thresholds and cumulative wait logic with a single ±12 ms-style dead band plus ±one main-loop tick nudges to the next flip time; removed the old WAIT_* branches; kept the large catch-up reschedule (ft×18 style).
+
+Bottom-screen seek bar (touch) — Expanded the vertical hit region from a very narrow band to a symmetric band around the bar’s vertical center (center ± half-height), with seek-bar geometry matching the hit height.
+
+Seek engine (single wave) — While a demux/seek wave is active (PREPARE_SEEKING / SEEKING), new submits no longer stack duplicate queue entries; seek_queued_pos_ms is written before enqueue, with rollback if the queue add fails, and deferred follow-up when busy.
+
+Seek gate (“playback started”) — No demux seek is submitted until playback has actually started (playback_not_started cleared after first video frame to display, or audio-only path as designed). IDLE / PREPARE_PLAYING still cannot submit seeks.
+
+Decode thread / buffering / seek — Removed forced BUFFERING on open; added sleeps on BUFFERING/EOF paths to avoid CPU spin; 5 s wall-clock guard for stuck seek waves; after clear-cache, ring indices (next_store_index / next_draw_index) are aligned so video can resume; deferred seek handling stays consistent with POST_SEEK buffering.
+
+Demux seek — Interruptible avformat_seek_file with a default 8 s wall-clock cap (overridable by macro) so long seeks cannot wedge the whole pipeline.
+
+CPU core count at boot — Frozen after init (Util_boot_cpu_core_count()), with a safe default when not initialized; drives fake-model tier, HW(auto) policy, and 2 vs 4 CPU bar rows on the bottom screen.
+
+Player UI — Progress thumb/fill tracks actual playback head (media_current_pos); the preview line tracks drag / D-Pad / Circle Pad preview; decode status string HW/MVD ordering updated.
+
+Default “no log” build — Default DEF_NO_LOG: strip log.c from the build, stub log macros in headers, and relax unused-variable warnings for no-log builds.
+
+Circle Pad + seek UX — Circle Pad is merged into the same d_* inputs as the D-Pad (dead zone, activation threshold, corrected axis mapping). In the player, hold = scrub preview only; release commits the seek. Thumb/fill stay on media_current_pos; the preview line matches touch and D-Pad / Circle Pad preview.
+
+SAR-aware presentation — Soft decode stores FFmpeg SAR as sar_width = num/den, sar_height = 1. Presentation size (Vid_video_presentation_wh) uses coded size × SAR for fitting and AUTO 3D detection (e.g. 400×240 with SAR 2:1 treated like 800×240). Removed forcing SAR = 1 on SBS where it conflicted; fit/draw avoid double-applying SAR.
+
+100 ms seek coalescing + feel — Overlapping seeks while busy become seek_request_deferred only; after each wave starts (seek_exec_epoch_start_ms), the decoder waits VID_SEEK_COALESCE_DELAY_MS (100 ms) before re-queuing one follow-up with the latest seek_pos. Queue failures roll back seek_queued. Step seeks while “in the pipe” use seek_pos as the step base. Submit is blocked while playback_not_started.
+
+
+love you guys 😀
+
+
+if you want encode movie for n3ds, It can be done quite easily with the script bat I provided.
+https://github.com/mockmodular/topos_3ds-video-player/releases/tag/0.12.3.1
+convert3dscpuh264.3dperfect.bat
 
 
 
