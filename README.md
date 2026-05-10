@@ -4,6 +4,10 @@ GitHub:
 https://github.com/mockmodular/topos_3ds-video-player/releases/tag/0.12.3.1
 https://github.com/mockmodular/topos_3ds-video-player
 
+gbatemp：
+https://gbatemp.net/threads/release-topos-true-sbs-3d-video-player-for-3ds-rgb888-mvd-hardware-decode-smooth-clean.681033/
+
+
 202605020855 news I have tested this software and found that implementing SBS video playback on the O3DS is very difficult. I'm not entirely sure — it's possible that further, more advanced 'perfect' optimization could enable SBS video playback on the O3DS, but I haven't achieved that yet. With my current implementation, SBS playback on the O3DS suffers from slightly weaker performance, making smooth playback impossible. The video always falls behind the audio, and I have found it very difficult to resolve this issue. However, this software's SBS 3D playback on the N3DS is perfect. — My apologies for the inconvenience.
 
 so this software for now only recommend for n3ds ......
