@@ -54,7 +54,9 @@ Both with real parallax barrier 3D, and both at full **RGB888 true color** — n
 
 ### True SBS 3D that actually works
 
-SBS content is automatically detected and the frame is split into left/right eye images for the parallax barrier. The detection is simple and reliable — if `height == 240 && width >= 640`, it's SBS. Right-eye alignment always tracks left-eye geometry perfectly. You can also switch manually: 3D / 2D / auto.
+On supported New Nintendo 3DS systems, the player uses the system MVD service for H.264 hardware decoding, which produces a linear, full-frame ABGR32 buffer. Because video has no meaningful alpha channel, alpha is forced to fully opaque before upload. The Side-by-Side frame is then split into left and right halves, each written to a separate GPU texture for the left and right eyes. Textures use the RGBA8 tiled layout required by the 3DS GPU, so the CPU performs a linear-to-tiled reorder (with a dedicated, optimized path for MVD). Finally, the top screen’s left and right eye views each sample the corresponding texture.
+
+SBS content is automatically detected and the frame is split into left/right eye images for the parallax barrier. The detection is simple and reliable — if `height == 240 && width >= 640`(its "auto" mode logic), it's SBS. Right-eye alignment always tracks left-eye geometry perfectly. You can also switch other mode: 3D(force 3D) / 2D(force 2D) / auto(this logic).
 
 If you play mono content with the 3D slider turned up, the right eye now correctly mirrors the left instead of going black (a bug in the original).
 
