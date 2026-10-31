@@ -16,6 +16,7 @@
 #include "system/util/hw_config.h"
 #include "system/util/err.h"
 #include "system/util/log.h"
+#include "system/util/speaker.h"
 #include "system/util/str.h"
 #include "system/util/util.h"
 
@@ -27,6 +28,14 @@ uint8_t Vid_get_default_num_of_threads(void)
 	return NUM_OF_THREADS_O3DS;
 }
 
+void Vid_set_volume(uint16_t volume)
+{
+	if(volume > 100)
+		volume = 100;
+	vid_player.volume = volume;
+	Util_speaker_set_volume(DEF_VID_SPEAKER_SESSION_ID, (uint8_t)volume);
+}
+
 void Vid_init_settings(void)
 {
 	vid_player.auto_dim_5s = false;
@@ -35,8 +44,8 @@ void Vid_init_settings(void)
 	vid_player.texture_filter_mode = VID_TEX_FILTER_AUTO;
 	vid_player.video_scale_mode = VID_SCALE_FIT;
 	vid_player.seek_duration = 10;
-	/* Default software volume (0–100); missing <7> in save file also falls back to 100 in Vid_load_settings. */
-	vid_player.volume = 100;
+	/* Output volume; missing <7> in old settings also falls back to unity gain. */
+	Vid_set_volume(100);
 
 	vid_player.disable_audio = false;
 	vid_player.disable_video = false;
@@ -211,7 +220,8 @@ uint32_t Vid_load_settings(void)
 	vid_player.use_hw_decoding_pending = vid_player.use_hw_decoding;
 	vid_player.use_hw_color_conversion_pending = vid_player.use_hw_color_conversion;
 	vid_player.use_multi_threaded_decoding = ((settings_valid_until > 5) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[5]), NULL, 10) != 0) : true);
-	vid_player.volume = ((settings_valid_until > 7) ? (uint16_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[7]), NULL, 10), 0) : 100);
+	/* Clamp before narrowing: legacy software amplification and oversized values become unity gain. */
+	Vid_set_volume((settings_valid_until > 7) ? (uint16_t)Util_min(strtoul(DEF_STR_NEVER_NULL(&out_data[7]), NULL, 10), 100UL) : 100);
 	vid_player.seek_duration = ((settings_valid_until > 8) ? (uint8_t)Util_max(strtoul(DEF_STR_NEVER_NULL(&out_data[8]), NULL, 10), 0) : 10);
 	(void)((settings_valid_until > 9) ? strtoul(DEF_STR_NEVER_NULL(&out_data[9]), NULL, 10) : 1); /* 旧版 aspect ratio，已忽略 */
 	if(settings_valid_until >= SETTINGS_ELEMENTS_V9)
@@ -255,9 +265,6 @@ uint32_t Vid_load_settings(void)
 
 	/* use_hw_decoding：仅表示「允许尝试 MVD」；真实 O3DS / fake O3DS 均保留用户选择。
 	 * 能否走硬解由 vid_decode 按片源与硬件能力决定，不可用则自动软解。 */
-
-	if(vid_player.volume > 999)
-		vid_player.volume = 100;
 
 	if(vid_player.seek_duration > 99 || vid_player.seek_duration < 1)
 		vid_player.seek_duration = 10;

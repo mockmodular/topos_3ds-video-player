@@ -45,7 +45,7 @@ static void seek_engine_submit(void)
 	if(!seek_engine_can_submit())
 		return;
 
-	/* 合法 seek：须已真正开播。有视频时首帧翻入显示管线后 playback_not_started=false；纯音频见 BUFFERING。 */
+	/* 初始化完成后允许 seek；H.264 硬解还须等待首帧进入显示管线。 */
 	if(vid_player.playback_not_started)
 		return;
 

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 uint8_t  Vid_get_default_num_of_threads(void);
+void     Vid_set_volume(uint16_t volume);
 void     Vid_init_settings(void);
 void     Vid_init_hidden_settings(void);
 uint32_t Vid_load_settings(void);

@@ -25,6 +25,16 @@ uint32_t Util_speaker_init(void);
 uint32_t Util_speaker_set_audio_info(uint8_t play_ch, uint8_t music_ch, uint32_t sample_rate);
 
 /**
+ * @brief Set channel output volume without modifying or draining queued PCM.
+ * The value is retained while idle and reapplied when the channel is configured.
+ * @param play_ch (in) Internal speaker ch (0 ~ 23).
+ * @param volume (in) Output volume (0 ~ 100; 0 is mute, 100 is unity gain).
+ * @return On success DEF_SUCCESS, on invalid input DEF_ERR_INVALID_ARG.
+ * @note Serialized with speaker initialization, channel configuration and exit.
+*/
+uint32_t Util_speaker_set_volume(uint8_t play_ch, uint8_t volume);
+
+/**
  * @brief Add audio buffer.
  * @param play_ch (in) Internal speaker ch (0 ~ 23).
  * @param buffer (in) Pointer for raw audio data (PCM_S16LE).
@@ -105,6 +115,7 @@ void Util_speaker_exit(void);
 
 #define Util_speaker_init() DEF_ERR_DISABLED
 #define Util_speaker_set_audio_info(...) DEF_ERR_DISABLED
+#define Util_speaker_set_volume(...) DEF_ERR_DISABLED
 #define Util_speaker_add_buffer(...) DEF_ERR_DISABLED
 #define Util_speaker_get_available_buffer_num(...) 0
 #define Util_speaker_get_available_buffer_size(...) 0

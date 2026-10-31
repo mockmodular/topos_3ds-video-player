@@ -57,7 +57,7 @@ void VidSeekEngine_cancel_kbd_preview(void);
 //Returns the current display state; safe to call every frame from the draw path.
 VidSeekEngineView VidSeekEngine_get_view(void);
 
-/* 结束 playback_not_started：有视频时由 Vid_main 首帧翻帧后调用；无非零帧率视频轨时由解码线程 BUFFERING 收尾调用。 */
+/* 结束 playback_not_started：H.264 硬解由 Vid_main 首帧翻帧后调用；其他视频和音频在初始化完成后调用。 */
 void VidSeekEngine_mark_playback_started(void);
 
 /* 入队 DECODE_THREAD_PLAY_REQUEST 之前调用：运行时唯一把 playback_not_started 置回 true。 */

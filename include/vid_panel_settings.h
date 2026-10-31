@@ -31,7 +31,7 @@ typedef enum {
     VP_SETTING_ID_ENTER_ADVANCED    = 21,
     VP_SETTING_ID_ENTER_CUSTOM      = 23,
 
-    VP_SETTING_ID_SW_VOLUME           = 30,
+    VP_SETTING_ID_VOLUME              = 30,
     VP_SETTING_ID_SW_SEEK_DURATION    = 31,
     VP_SETTING_ID_SW_TEX_FILTER       = 33,
     VP_SETTING_ID_SW_MULTI_DECODE     = 34, /* 开/关多线程解码；线程数等数值项不在此菜单 */

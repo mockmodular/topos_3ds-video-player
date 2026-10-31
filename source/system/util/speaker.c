@@ -24,6 +24,10 @@
 
 //Variables.
 static bool util_speaker_init = false;
+/* Serialize output-volume updates with NDSP initialization, channel reset and exit. */
+static LightLock util_speaker_control_lock = 1;
+static bool util_speaker_volume_set[NUM_OF_CH] = { false, };
+static float util_speaker_volume[NUM_OF_CH] = { 0, };
 static uint32_t util_speaker_music_ch[NUM_OF_CH] = { 0, };
 static ndspWaveBuf util_ndsp_buffer[NUM_OF_CH][DEF_SPEAKER_MAX_BUFFERS] = { 0, };
 
@@ -32,6 +36,7 @@ uint32_t Util_speaker_init(void)
 {
 	uint32_t result = DEF_ERR_OTHER;
 
+	LightLock_Lock(&util_speaker_control_lock);
 	if(util_speaker_init)
 		goto already_inited;
 
@@ -46,12 +51,15 @@ uint32_t Util_speaker_init(void)
 	}
 
 	util_speaker_init = true;
+	LightLock_Unlock(&util_speaker_control_lock);
 	return DEF_SUCCESS;
 
 	already_inited:
+	LightLock_Unlock(&util_speaker_control_lock);
 	return DEF_ERR_ALREADY_INITIALIZED;
 
 	nintendo_api_failed:
+	LightLock_Unlock(&util_speaker_control_lock);
 	return result;
 }
 
@@ -59,6 +67,7 @@ uint32_t Util_speaker_set_audio_info(uint8_t play_ch, uint8_t music_ch, uint32_t
 {
 	float mix[12] = { 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
 
+	LightLock_Lock(&util_speaker_control_lock);
 	if(!util_speaker_init)
 		goto not_inited;
 
@@ -67,6 +76,8 @@ uint32_t Util_speaker_set_audio_info(uint8_t play_ch, uint8_t music_ch, uint32_t
 
 	ndspChnReset(play_ch);
 	ndspChnWaveBufClear(play_ch);
+	if(util_speaker_volume_set[play_ch])
+		mix[0] = mix[1] = util_speaker_volume[play_ch];
 	ndspChnSetMix(play_ch, mix);
 	if(music_ch == 2)
 	{
@@ -90,13 +101,35 @@ uint32_t Util_speaker_set_audio_info(uint8_t play_ch, uint8_t music_ch, uint32_t
 	}
 	memset(util_ndsp_buffer[play_ch], 0, sizeof(util_ndsp_buffer[play_ch]));
 
+	LightLock_Unlock(&util_speaker_control_lock);
 	return DEF_SUCCESS;
 
 	not_inited:
+	LightLock_Unlock(&util_speaker_control_lock);
 	return DEF_ERR_NOT_INITIALIZED;
 
 	invalid_arg:
+	LightLock_Unlock(&util_speaker_control_lock);
 	return DEF_ERR_INVALID_ARG;
+}
+
+uint32_t Util_speaker_set_volume(uint8_t play_ch, uint8_t volume)
+{
+	float mix[12] = { 0, };
+
+	if(play_ch >= NUM_OF_CH || volume > 100)
+		return DEF_ERR_INVALID_ARG;
+
+	mix[0] = mix[1] = (float)volume / 100.0f;
+	LightLock_Lock(&util_speaker_control_lock);
+	/* Retain the requested gain while idle and across channel/DSP resets. */
+	util_speaker_volume[play_ch] = mix[0];
+	util_speaker_volume_set[play_ch] = true;
+	if(util_speaker_init && (util_speaker_music_ch[play_ch] == 1 || util_speaker_music_ch[play_ch] == 2))
+		ndspChnSetMix(play_ch, mix);
+	LightLock_Unlock(&util_speaker_control_lock);
+
+	return DEF_SUCCESS;
 }
 
 uint32_t Util_speaker_add_buffer(uint8_t play_ch, const uint8_t* buffer, uint32_t size)
@@ -255,8 +288,12 @@ bool Util_speaker_is_playing(uint8_t play_ch)
 
 void Util_speaker_exit(void)
 {
+	LightLock_Lock(&util_speaker_control_lock);
 	if(!util_speaker_init)
+	{
+		LightLock_Unlock(&util_speaker_control_lock);
 		return;
+	}
 
 	for(uint8_t i = 0; i < NUM_OF_CH; i++)
 		Util_speaker_clear_buffer(i);
@@ -265,5 +302,6 @@ void Util_speaker_exit(void)
 	ndspExit();
 	for(uint8_t i = 0; i < NUM_OF_CH; i++)
 		util_speaker_music_ch[i] = UINT32_MAX;
+	LightLock_Unlock(&util_speaker_control_lock);
 }
 #endif //DEF_SPEAKER_API_ENABLE

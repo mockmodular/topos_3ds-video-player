@@ -961,8 +961,13 @@ void Vid_convert_thread(void* arg)
 						{
 							C3D_Tex* l_tex = vid_player.large_image[image_index][EYE_LEFT].images[0].c2d.tex;
 							C3D_Tex* r_tex = vid_player.large_image[image_index][EYE_RIGHT].images[0].c2d.tex;
-							C3D_TexFlush(l_tex);
-							C3D_TexFlush(r_tex);
+							/* MPEG-2 uses the whole-linear-heap flush in C3D_FrameEnd(0),
+							 * before GPU execution. Keep that flush when skipping these. */
+							if(strcmp(vid_player.video_info[packet_index].short_format_name, "mpeg2video") != 0)
+							{
+								C3D_TexFlush(l_tex);
+								C3D_TexFlush(r_tex);
+							}
 							Draw_image_data* li_l = &vid_player.large_image[image_index][EYE_LEFT].images[0];
 							Draw_image_data* li_r = &vid_player.large_image[image_index][EYE_RIGHT].images[0];
 							li_l->subtex->width  = (uint16_t)half_w;

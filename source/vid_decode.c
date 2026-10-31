@@ -530,6 +530,10 @@ void Vid_decode_thread(void* arg)
 							DEF_LOG_DOUBLE(ram_to_keep_base);
 						}
 
+						/* 初始化完成：仅实际使用 H.264 硬解时继续等待首帧。 */
+						if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING))
+							VidSeekEngine_mark_playback_started();
+
 						//Start reading packets.
 						is_read_packet_thread_active = true;
 						DEF_LOG_RESULT_SMART(result, Util_queue_add(&vid_player.read_packet_thread_command_queue, READ_PACKET_THREAD_READ_PACKET_REQUEST,
@@ -950,10 +954,6 @@ void Vid_decode_thread(void* arg)
 						vid_player.state = PLAYER_STATE_PAUSE;
 					}
 
-					/* 有视频轨：须主线程首帧翻入显示后才 mark（vid_draw）；纯音频/无有效帧率画面此处放行 seek。 */
-					if(!Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime))
-						VidSeekEngine_mark_playback_started();
-
 					/* e.g. follow-up seek 入队失败时 seek_request_deferred 仍为 true：缓冲结束后再试一次 */
 					vid_decode_finish_seek_wave_try_deferred();
 
@@ -1136,13 +1136,6 @@ void Vid_decode_thread(void* arg)
 
 			//Update current media position.
 			vid_player.media_current_pos = Vid_get_current_media_pos(vid_player.video_current_pos[EYE_LEFT], vid_player.video_current_pos[EYE_RIGHT], vid_player.audio_current_pos);
-
-			/* 兜底：仅无非零帧率视频轨时（纯音频等），缓冲通知若未跑到仍可凭播放头放开 seek；有视频则须首帧展示（vid_draw）。 */
-			if(vid_player.playback_not_started
-			&& !Vid_has_video(vid_player.num_of_video_tracks, vid_player.video_frametime)
-			&& (vid_player.state == PLAYER_STATE_PLAYING || vid_player.state == PLAYER_STATE_PAUSE)
-			&& vid_player.media_current_pos > 1.0)
-				VidSeekEngine_mark_playback_started();
 
 			//If file does NOT have normal videos, update bar pos to see if the position has changed
 			//so that we can update the screen when it gets changed.
@@ -1593,27 +1586,7 @@ void Vid_audio_decode_thread(void* arg)
 						result = Util_converter_convert_audio(&parameters);
 						if(result == DEF_SUCCESS)
 						{
-							bool too_big = false;
-
-							//Change volume.
-							if(vid_player.volume != 100)
-							{
-								for(uint32_t i = 0; i < (parameters.out_samples * parameters.out_ch * 2); i += 2)
-								{
-									if(*(int16_t*)(parameters.converted + i) * ((double)vid_player.volume / 100) > INT16_MAX)
-									{
-										*(int16_t*)(parameters.converted + i) = INT16_MAX;
-										too_big = true;
-									}
-									else
-										*(int16_t*)(parameters.converted + i) = *(int16_t*)(parameters.converted + i) * ((double)vid_player.volume / 100);
-								}
-
-								if(too_big)
-									vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state | PLAYER_SUB_STATE_TOO_BIG);
-								else
-									vid_player.sub_state = (Vid_player_sub_state)(vid_player.sub_state & ~PLAYER_SUB_STATE_TOO_BIG);
-							}
+							/* Queue unscaled PCM; volume is applied by the NDSP output mixer. */
 
 						//Add audio to speaker buffer, wait up to 250ms.
 						for(uint8_t i = 0; i < 125; i++)

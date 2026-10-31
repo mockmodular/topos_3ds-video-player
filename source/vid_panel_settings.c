@@ -50,7 +50,7 @@ void vid_panel_refit_layout_refresh_tex(void)
 
 static const VpSettingRowDesc s_root_rows[] = {
     {
-        VP_SETTING_ROW_SLIDER, VP_SETTING_ID_SW_VOLUME,
+        VP_SETTING_ROW_SLIDER, VP_SETTING_ID_VOLUME,
         "volume",
         0, {""}, 0, 100
     },
@@ -248,7 +248,7 @@ static int get_value(VpSettingId id)
             return 1;
         }
 
-        case VP_SETTING_ID_SW_VOLUME:
+        case VP_SETTING_ID_VOLUME:
             return (vid_player.volume > 100) ? 100 : (int)vid_player.volume;
         case VP_SETTING_ID_SW_SEEK_DURATION:
             return (int)vid_player.seek_duration;
@@ -323,11 +323,11 @@ static void set_value(VpSettingId id, int v)
             Vid_save_settings();
             break;
 
-        case VP_SETTING_ID_SW_VOLUME: {
+        case VP_SETTING_ID_VOLUME: {
             int vol = v;
             if (vol < 0) vol = 0;
             if (vol > 100) vol = 100;
-            vid_player.volume = (uint16_t)vol;
+            Vid_set_volume((uint16_t)vol);
             if (!s_slider_defer_disk_save)
                 Vid_save_settings();
             break;

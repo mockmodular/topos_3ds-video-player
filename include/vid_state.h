@@ -168,7 +168,6 @@ typedef enum
 	PLAYER_SUB_STATE_NONE					= 0,
 	PLAYER_SUB_STATE_HW_DECODING			= (1 << 0),
 	PLAYER_SUB_STATE_HW_CONVERSION			= (1 << 1),
-	PLAYER_SUB_STATE_TOO_BIG				= (1 << 2),
 	PLAYER_SUB_STATE_RESUME_LATER			= (1 << 3),
 	PLAYER_SUB_STATE_SEEK_BACKWARD_WAIT		= (1 << 4),
 	/** 视频 seek 波已结束，正处于「为恢复播放而 BUFFERING」；叠新 seek 时可跳过余下缓冲直接开下一波 demux。 */
@@ -178,7 +177,7 @@ typedef enum
 /* 自然播放到末尾（PLAY_NEXT）时保留：seek 重开会话依赖这些位决定是否 MVD/Y2R。
  * 仅清除 RESUME_LATER / SEEK_BACKWARD_WAIT 等临时状态。 */
 #define PLAYER_SUB_STATE_PERSIST_AFTER_NATURAL_EOF_MASK \
-	(PLAYER_SUB_STATE_HW_DECODING | PLAYER_SUB_STATE_HW_CONVERSION | PLAYER_SUB_STATE_TOO_BIG)
+	(PLAYER_SUB_STATE_HW_DECODING | PLAYER_SUB_STATE_HW_CONVERSION)
 
 typedef enum
 {
@@ -243,7 +242,7 @@ typedef struct
 	uint8_t texture_filter_mode;	/* VID_TEX_FILTER_BILINEAR / NEAREST / AUTO */
 	uint8_t video_scale_mode;		/* VID_SCALE_PIXEL_PERFECT / VID_SCALE_FIT */
 	uint8_t seek_duration;
-	uint16_t volume;
+	uint16_t volume;			/* NDSP output volume, 0–100; queued PCM remains unscaled. */
 
 	//Settings (can NOT be changed while playing videos).
 	bool disable_audio;
@@ -290,7 +289,7 @@ typedef struct
 	double seek_demux_target_ms;
 	double seek_start_pos_after_jump;
 	bool seek_request_deferred;
-	/* true=尚未真正开播（合法 seek 须 false）。有视频：首帧翻入显示管线后由 Vid_draw 置 false；纯音频：首波 BUFFERING 结束由解码线程置 false。入队打开前 mark_playback_not_started()。 */
+	/* true=尚不允许 seek。入队打开前置 true；初始化完成后，H.264 硬解等首帧进入显示管线时置 false，其他视频和音频立即置 false。 */
 	bool playback_not_started;
 	/* 当前这波 seek 在解码线程「开始执行」的时刻(osGetTime ms)；合并的 deferred 须晚于该时刻 +100ms 才入队。0 表示未起算。 */
 	uint64_t seek_exec_epoch_start_ms;
