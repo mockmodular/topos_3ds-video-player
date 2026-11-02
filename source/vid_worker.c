@@ -922,8 +922,6 @@ void Vid_convert_thread(void* arg)
 								vid_sbs_morton_opt_at_half(video, width, vis_half, height, sbs_l, sbs_r);
 							else
 								vid_sbs_morton_at_half(video, width, vis_half, height, sbs_l, sbs_r);
-							C3D_TexFlush(sbs_l);
-							C3D_TexFlush(sbs_r);
 							Draw_image_data* li_ll = &vid_player.large_image[image_index][EYE_LEFT].images[0];
 							Draw_image_data* li_rr = &vid_player.large_image[image_index][EYE_RIGHT].images[0];
 							li_ll->subtex->width  = (uint16_t)vis_half;
@@ -961,13 +959,6 @@ void Vid_convert_thread(void* arg)
 						{
 							C3D_Tex* l_tex = vid_player.large_image[image_index][EYE_LEFT].images[0].c2d.tex;
 							C3D_Tex* r_tex = vid_player.large_image[image_index][EYE_RIGHT].images[0].c2d.tex;
-							/* MPEG-2 uses the whole-linear-heap flush in C3D_FrameEnd(0),
-							 * before GPU execution. Keep that flush when skipping these. */
-							if(strcmp(vid_player.video_info[packet_index].short_format_name, "mpeg2video") != 0)
-							{
-								C3D_TexFlush(l_tex);
-								C3D_TexFlush(r_tex);
-							}
 							Draw_image_data* li_l = &vid_player.large_image[image_index][EYE_LEFT].images[0];
 							Draw_image_data* li_r = &vid_player.large_image[image_index][EYE_RIGHT].images[0];
 							li_l->subtex->width  = (uint16_t)half_w;
@@ -1004,8 +995,6 @@ void Vid_convert_thread(void* arg)
 								memcpy_asm((uint8_t*)l_tex->data + tr * l_tex_tile_row, video + tr * full_tile_row,                  half_tile_row);
 								memcpy_asm((uint8_t*)r_tex->data + tr * r_tex_tile_row, video + tr * full_tile_row + half_tile_row,  half_tile_row);
 							}
-							C3D_TexFlush(l_tex);
-							C3D_TexFlush(r_tex);
 							Draw_image_data* li_l = &vid_player.large_image[image_index][EYE_LEFT].images[0];
 							Draw_image_data* li_r = &vid_player.large_image[image_index][EYE_RIGHT].images[0];
 							li_l->subtex->width  = (uint16_t)half_w;
@@ -1034,8 +1023,6 @@ void Vid_convert_thread(void* arg)
 						C3D_Tex* sbs_l = vid_player.large_image[image_index][EYE_LEFT].images[0].c2d.tex;
 						C3D_Tex* sbs_r = vid_player.large_image[image_index][EYE_RIGHT].images[0].c2d.tex;
 						Vid_mvd_sbs_morton_opt(video, width, height, sbs_l, sbs_r);
-						C3D_TexFlush(sbs_l);
-						C3D_TexFlush(sbs_r);
 						Draw_image_data* li_ll = &vid_player.large_image[image_index][EYE_LEFT].images[0];
 						Draw_image_data* li_rr = &vid_player.large_image[image_index][EYE_RIGHT].images[0];
 						li_ll->subtex->width  = (uint16_t)half_w;
@@ -1079,9 +1066,8 @@ void Vid_convert_thread(void* arg)
 			{
 				if(vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2 && !video)
 				{
-					//y2r*2 2D direct path: Y2R wrote directly to texture; flush and update subtex.
+					//y2r*2 2D direct path: Y2R wrote directly to texture; update subtex.
 					Draw_image_data* di2d = &vid_player.large_image[image_index][packet_index].images[0];
-					C3D_TexFlush(di2d->c2d.tex);
 					di2d->subtex->width  = (uint16_t)width;
 					di2d->subtex->height = (uint16_t)height;
 					di2d->subtex->left   = 0.0f;
@@ -1102,7 +1088,6 @@ void Vid_convert_thread(void* arg)
 			//MVD 2D: fixed Unroll4-optimized Morton path.
 			Draw_image_data* di_mvd = &vid_player.large_image[image_index][packet_index].images[0];
 			Vid_mvd_2d_morton_opt(video, width, height, di_mvd->c2d.tex);
-			C3D_TexFlush(di_mvd->c2d.tex);
 				di_mvd->subtex->width  = (uint16_t)width;
 				di_mvd->subtex->height = (uint16_t)height;
 				di_mvd->subtex->left   = 0.0f;

@@ -564,8 +564,6 @@ uint32_t Draw_set_texture_data_direct(Draw_image_data* image, uint8_t* buf, uint
 	}
 #endif //DEF_DRAW_DMA_ENABLE
 
-	C3D_TexFlush(image->c2d.tex);
-
 	return DEF_SUCCESS;
 
 	not_inited:
@@ -685,8 +683,6 @@ uint32_t Draw_set_texture_data(Draw_image_data* image, uint8_t* buf, uint32_t pi
 			count[1]++;
 		}
 	}
-
-	C3D_TexFlush(image->c2d.tex);
 
 	return DEF_SUCCESS;
 
@@ -1046,6 +1042,8 @@ void Draw_apply_draw(void)
 	if(!util_draw_init)
 		return;
 
+	/* Keep flags=0: flush the whole linear heap, including uploaded video textures,
+	 * before GPU execution. Texture upload paths rely on this shared flush. */
 	C3D_FrameEnd(0);
 	osTickCounterUpdate(&util_draw_frame_time_stopwatch);
 	util_draw_frametime = osTickCounterRead(&util_draw_frame_time_stopwatch);

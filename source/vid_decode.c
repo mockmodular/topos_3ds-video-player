@@ -289,7 +289,10 @@ void Vid_decode_thread(void* arg)
 						{
 							num_of_audio_tracks = 0;
 							for(uint8_t i = 0; i < DEF_DECODER_MAX_AUDIO_TRACKS; i++)
+							{
 								strcpy(vid_player.audio_info[i].format_name, "disabled");
+								strcpy(vid_player.audio_info[i].short_format_name, "disabled");
+							}
 						}
 						if(vid_player.disable_video)
 						{
@@ -297,6 +300,7 @@ void Vid_decode_thread(void* arg)
 							for(uint32_t i = 0; i < EYE_MAX; i++)
 							{
 								strcpy(vid_player.video_info[i].format_name, "disabled");
+								strcpy(vid_player.video_info[i].short_format_name, "disabled");
 								vid_player.video_info[i].is_av1_codec = false;
 							}
 						}
@@ -331,7 +335,10 @@ void Vid_decode_thread(void* arg)
 								Util_speaker_exit();
 								vid_player.num_of_audio_tracks = 0;
 								for(uint32_t i = 0; i < num_of_audio_tracks; i++)
+								{
 									strcpy(vid_player.audio_info[i].format_name, "Unsupported format");
+									strcpy(vid_player.audio_info[i].short_format_name, "unsupported");
+								}
 
 								//Ignore the error.
 								result = 0;
@@ -486,6 +493,7 @@ void Vid_decode_thread(void* arg)
 								for(uint8_t i = 0; i < num_of_video_tracks; i++)
 								{
 									strcpy(vid_player.video_info[i].format_name, "Unsupported format");
+									strcpy(vid_player.video_info[i].short_format_name, "unsupported");
 									vid_player.video_info[i].is_av1_codec = false;
 								}
 

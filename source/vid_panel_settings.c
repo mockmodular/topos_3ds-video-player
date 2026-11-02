@@ -14,8 +14,8 @@
 #include "system/util/queue.h"
 
 /* ── Sub-page row tables ────────────────────────────────────────────────
- * ROOT   : volume, custom, video, advanced, ui mod (UI labels all lowercase; acronyms e.g. SW/HW stay caps)
- * CUSTOM : seek step, browse root (movies / SD root), auto dim (5s), eco
+ * ROOT   : volume, custom, video, advanced, ui mod (UI labels and options all lowercase)
+ * CUSTOM : seek step, browse root (/movies / sd root), auto dim (5s), eco
  * VIDEO  : 3d or 2d / tex filter / scale / 3d eyes swap
  * ADVANCED: HW decode(auto) / HW color / fake model / multi decode / no audio / no video (MVD upload = Unroll4 fixed)
  * ────────────────────────────────────────────────────────────────────── */
@@ -85,7 +85,7 @@ static const VpSettingRowDesc s_custom_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_FS_BROWSER_ROOT,
         "browse root",
-        2, {"movies", "SD root"}, 0, 0
+        2, {"/movies", "sd root"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_AUTO_DIM_5S,
@@ -118,7 +118,7 @@ static const VpSettingRowDesc s_video_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_SW_SBS_SWAP,
         "3d eyes swap",
-        2, {"L<>R", "normal"}, 0, 0
+        2, {"l<>r", "normal"}, 0, 0
     },
 };
 
@@ -126,17 +126,17 @@ static const VpSettingRowDesc s_advanced_rows[] = {
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_ADV_HW_DECODE,
         "hw decode",
-        2, {"SW", "HW(auto)"}, 0, 0
+        2, {"sw", "hw(auto)"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_ADV_HW_COLOR,
         "hw color",
-        2, {"CPU", "Y2R(auto)"}, 0, 0
+        2, {"cpu", "y2r(auto)"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_FAKE_MODEL,
         "fake model",
-        3, {"N3DS", "O3DS", "off"}, 0, 0
+        3, {"n3ds", "o3ds", "off"}, 0, 0
     },
     {
         VP_SETTING_ROW_CHOICE, VP_SETTING_ID_SW_MULTI_DECODE,
@@ -269,7 +269,7 @@ static int get_value(VpSettingId id)
         case VP_SETTING_ID_SW_MULTI_DECODE:
             return vid_player.use_multi_threaded_decoding ? 1 : 0;
         case VP_SETTING_ID_SW_SBS_SWAP:
-            /* UI chip 0 = L<>R (swap on), 1 = normal */
+            /* UI chip 0 = l<>r (swap on), 1 = normal */
             return vid_player.sbs_swap_eyes ? 0 : 1;
 
         case VP_SETTING_ID_SW_SE1_NO_AUDIO:

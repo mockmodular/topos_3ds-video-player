@@ -43,6 +43,7 @@ static MVDSTD_Config util_decoder_mvd_config = { .input_type = MVD_INPUT_H264, .
 
 uint32_t DecoderMvd_init(uint8_t session)
 {
+	bool service_registered = false;
 	uint32_t width = 0;
 	uint32_t height = 0;
 	uint32_t size = 0;
@@ -57,6 +58,20 @@ uint32_t DecoderMvd_init(uint8_t session)
 
 	if(util_mvd_video_decoder_init)
 		goto already_inited;
+
+	/* Fake model does not imply MVD availability. Even buffer-size calculation
+	 * requests mvd:STD and can wait forever when the service is absent. */
+	result = srvIsServiceRegistered(&service_registered, "mvd:STD");
+	if(result != DEF_SUCCESS)
+	{
+		DEF_LOG_RESULT(srvIsServiceRegistered, false, result);
+		return result;
+	}
+	if(!service_registered)
+	{
+		DEF_LOG_STRING("MVD service unavailable; falling back to software decoding.");
+		return DEF_ERR_DISABLED;
+	}
 
 	width = DecoderVideoSoft_codec_context(session, 0)->width;
 	height = DecoderVideoSoft_codec_context(session, 0)->height;
