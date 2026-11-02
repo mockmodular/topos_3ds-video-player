@@ -14,7 +14,7 @@
 #include "system/util/queue.h"
 
 /* ── Sub-page row tables ────────────────────────────────────────────────
- * ROOT   : volume, custom, video, advanced, ui mod (UI labels and options all lowercase)
+ * ROOT   : volume, track, custom, video, advanced, ui mod (UI labels and options all lowercase)
  * CUSTOM : seek step, browse root (/movies / sd root), auto dim (5s), eco
  * VIDEO  : 3d or 2d / tex filter / scale / 3d eyes swap
  * ADVANCED: HW decode(auto) / HW color / fake model / multi decode / no audio / no video (MVD upload = Unroll4 fixed)
@@ -53,6 +53,11 @@ static const VpSettingRowDesc s_root_rows[] = {
         VP_SETTING_ROW_SLIDER, VP_SETTING_ID_VOLUME,
         "volume",
         0, {""}, 0, 100
+    },
+    {
+        VP_SETTING_ROW_CHOICE, VP_SETTING_ID_AUDIO_TRACK,
+        "track",
+        4, {"3", "2", "1", "0"}, 0, 0
     },
     {
         VP_SETTING_ROW_SUBMENU, VP_SETTING_ID_ENTER_CUSTOM,
@@ -250,6 +255,8 @@ static int get_value(VpSettingId id)
 
         case VP_SETTING_ID_VOLUME:
             return (vid_player.volume > 100) ? 100 : (int)vid_player.volume;
+        case VP_SETTING_ID_AUDIO_TRACK:
+            return 3 - (vid_player.audio_track <= 3 ? vid_player.audio_track : 0);
         case VP_SETTING_ID_SW_SEEK_DURATION:
             return (int)vid_player.seek_duration;
         case VP_SETTING_ID_FS_BROWSER_ROOT:
@@ -332,6 +339,11 @@ static void set_value(VpSettingId id, int v)
                 Vid_save_settings();
             break;
         }
+        case VP_SETTING_ID_AUDIO_TRACK:
+            if (v < 0 || v > 3) break;
+            vid_player.audio_track = (uint8_t)(3 - v);
+            Vid_save_settings();
+            break;
         case VP_SETTING_ID_SW_SEEK_DURATION: {
             int s = v;
             if (s < 1) s = 1;

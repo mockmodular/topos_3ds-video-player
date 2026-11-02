@@ -174,6 +174,11 @@ uint32_t Util_decoder_video_get_image(uint8_t** raw_data, double* current_pos, u
 	return DecoderVideoSoft_get_image(raw_data, current_pos, width, height, packet_index, session);
 }
 
+uint32_t Util_decoder_video_get_image_ref(struct AVFrame* frame, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session)
+{
+	return DecoderVideoSoft_get_image_ref(frame, current_pos, width, height, packet_index, session);
+}
+
 uint32_t Util_decoder_mvd_get_image(uint8_t** raw_data, double* current_pos, uint32_t width, uint32_t height, uint8_t session)
 {
 	return DecoderMvd_get_image(raw_data, current_pos, width, height, session);

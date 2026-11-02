@@ -324,21 +324,15 @@ static int dvs_video_allocate_buffer(AVCodecContext *avctx, AVFrame *frame, int 
 			return -1;
 		}
 
-		for(uint8_t i = 0; i < AV_NUM_DATA_POINTERS; i++)
+		/* All planes belong to this single allocation. FFmpeg references the
+		 * allocation as a whole; only its base address may be freed. */
+		frame->buf[0] = av_buffer_create(buffer, (size_t)buffer_size, dvs_frame_buffer_free, NULL, 0);
+		if(!frame->buf[0])
 		{
-			if(frame->data[i])
-			{
-				frame->buf[i] = av_buffer_create(frame->data[i], 0, dvs_frame_buffer_free, NULL, 0);
-				if(!frame->buf[i])
-				{
-					for(uint8_t k = 0; k < AV_NUM_DATA_POINTERS; k++)
-						frame->buf[k] = NULL;
-
-					free(buffer);
-					buffer = NULL;
-					return -1;
-				}
-			}
+			free(buffer);
+			memset(frame->data, 0, sizeof(frame->data));
+			memset(frame->linesize, 0, sizeof(frame->linesize));
+			return -1;
 		}
 
 		return 0;
@@ -827,6 +821,69 @@ uint16_t DecoderVideoSoft_get_available_raw_image_num(uint8_t packet_index, uint
 		return 0;
 	else
 		return util_video_decoder_available_raw_image[session][packet_index];
+}
+
+uint32_t DecoderVideoSoft_get_image_ref(AVFrame* frame, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session)
+{
+	AVFrame* source = NULL;
+	uint16_t buffer_num = 0;
+	double timebase = 0;
+
+	if(!frame || frame->data[0] || !current_pos || !width || !height || width % 2 || height % 2
+	|| packet_index >= DEF_DECODER_MAX_VIDEO_TRACKS || session >= DEF_DECODER_MAX_SESSIONS)
+		return DEF_ERR_INVALID_ARG;
+	if(!DecoderDemux_is_opened(session) || !util_video_decoder_init[session][packet_index])
+		return DEF_ERR_NOT_INITIALIZED;
+	if(!util_video_decoder_available_raw_image[session][packet_index])
+		return DEF_ERR_TRY_AGAIN;
+
+	buffer_num = util_video_decoder_raw_image_ready_index[session][packet_index];
+	source = util_video_decoder_raw_image[session][packet_index][buffer_num];
+	if(!source || source->format != AV_PIX_FMT_YUV420P || !source->buf[0])
+		return DEF_ERR_DISABLED;
+
+	/* Validate the actual plane ranges before taking the frame. In particular,
+	 * cropped/non-contiguous frames must not escape their owning AVBufferRef. */
+	for(unsigned i = 0; i < 3; i++)
+	{
+		uint32_t columns = i ? width / 2 : width;
+		uint32_t rows = i ? height / 2 : height;
+		uintptr_t address = (uintptr_t)source->data[i];
+		AVBufferRef* owner = av_frame_get_plane_buffer(source, (int)i);
+		uint64_t span = 0;
+		bool linear = false;
+
+		if(!address || source->linesize[i] < (int64_t)columns || source->linesize[i] >= 0x8000 || !owner)
+			return DEF_ERR_DISABLED;
+		span = (uint64_t)(rows - 1) * (uint32_t)source->linesize[i] + columns;
+		linear = (address >= OS_FCRAM_VADDR && (uint64_t)address + span <= (uint64_t)OS_FCRAM_VADDR + OS_FCRAM_SIZE)
+			|| (address >= OS_OLD_FCRAM_VADDR && (uint64_t)address + span <= (uint64_t)OS_OLD_FCRAM_VADDR + OS_OLD_FCRAM_SIZE);
+		if(!linear || address < (uintptr_t)owner->data || span > owner->size
+		|| address - (uintptr_t)owner->data > owner->size - span)
+			return DEF_ERR_DISABLED;
+	}
+
+	*current_pos = 0;
+	timebase = av_q2d(DecoderDemux_format_context(session)->streams[DecoderDemux_video_stream_num(session, packet_index)]->time_base);
+	if(timebase != 0)
+		*current_pos = (double)(source->pts == AV_NOPTS_VALUE ? source->pkt_dts : source->pts) * timebase * 1000;
+	else if(source->duration != 0)
+	{
+		double framerate = av_q2d(DecoderDemux_format_context(session)->streams[DecoderDemux_video_stream_num(session, packet_index)]->avg_frame_rate);
+		if(framerate != 0)
+			*current_pos = ((double)source->pts / source->duration) * (1000 / framerate);
+	}
+
+	/* The consumer owns the frame reference before the producer can reuse the
+	 * queue slot. No pixel copy or new reference allocation is needed. */
+	av_frame_move_ref(frame, source);
+	av_frame_free(&util_video_decoder_raw_image[session][packet_index][buffer_num]);
+	util_video_decoder_raw_image_ready_index[session][packet_index] =
+		(buffer_num + 1 < util_video_decoder_max_raw_image[session][packet_index]) ? buffer_num + 1 : 0;
+	LightLock_Lock(&util_video_decoder_raw_image_mutex[session][packet_index]);
+	util_video_decoder_available_raw_image[session][packet_index]--;
+	LightLock_Unlock(&util_video_decoder_raw_image_mutex[session][packet_index]);
+	return DEF_SUCCESS;
 }
 
 uint32_t DecoderVideoSoft_get_image(uint8_t** raw_data, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session)

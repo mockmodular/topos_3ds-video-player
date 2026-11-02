@@ -9,6 +9,7 @@
 
 struct AVCodecContext;
 struct AVPacket;
+struct AVFrame;
 
 void DecoderVideoSoft_set_enabled_cores(const bool frame_threading_cores[4], const bool slice_threading_cores[4], int worker_start_core);
 uint32_t DecoderVideoSoft_init(uint8_t low_resolution, uint8_t num_of_video_tracks, uint8_t num_of_threads, Media_thread_type thread_type, uint8_t session);
@@ -22,6 +23,9 @@ uint32_t DecoderVideoSoft_decode(uint8_t packet_index, uint8_t session);
 void DecoderVideoSoft_clear_raw_image(uint8_t packet_index, uint8_t session);
 uint16_t DecoderVideoSoft_get_available_raw_image_num(uint8_t packet_index, uint8_t session);
 uint32_t DecoderVideoSoft_get_image(uint8_t** raw_data, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session);
+/* Move a hardware-readable YUV420P frame into an empty AVFrame. DEF_ERR_DISABLED
+ * leaves the queue untouched so the caller can use get_image() instead. */
+uint32_t DecoderVideoSoft_get_image_ref(struct AVFrame* frame, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session);
 void DecoderVideoSoft_skip_image(double* current_pos, uint8_t packet_index, uint8_t session);
 void DecoderVideoSoft_exit(uint8_t session);
 

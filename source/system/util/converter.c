@@ -1060,6 +1060,150 @@ uint32_t Util_converter_y2r_yuv420p_sbs_to_rgba8888(const uint8_t* yuv420p, uint
 	return result;
 }
 
+bool Util_converter_y2r_can_convert_frame(uint32_t tex_width, uint32_t width, uint32_t height, bool sbs)
+{
+	uint32_t eye_width = sbs ? width / 2 : width;
+	return width != 0 && width % (sbs ? 16u : 8u) == 0
+		&& height != 0 && height <= 1024 && height % 8 == 0
+		&& eye_width <= 1024 && tex_width >= eye_width && (!sbs || tex_width < 1024);
+}
+
+/* An end event can occasionally be early or missed. The receive DMA status
+ * confirms completion before the input frame reference can be returned. */
+static uint32_t converter_y2r_wait_for_frame(Handle event)
+{
+	uint32_t wait_result = svcWaitSynchronization(event, 200000000);
+	uint64_t deadline = osGetTime() + 200;
+	bool done = false;
+	uint32_t result = Y2RU_IsDoneReceiving(&done);
+
+	while(result == DEF_SUCCESS && !done && wait_result == DEF_SUCCESS && osGetTime() < deadline)
+	{
+		svcSleepThread(100000);
+		result = Y2RU_IsDoneReceiving(&done);
+	}
+	if(result != DEF_SUCCESS)
+		return result;
+	if(done)
+		return DEF_SUCCESS;
+	return wait_result != DEF_SUCCESS ? wait_result : DEF_ERR_OTHER;
+}
+
+static void converter_y2r_cancel_frame(void)
+{
+	/* Keep the caller's frame alive until cancellation is acknowledged. Never
+	 * return a still-readable frame to FFmpeg after a service error. */
+	while(Y2RU_StopConversion() != DEF_SUCCESS)
+	{
+		bool done = false;
+		if(Y2RU_IsDoneReceiving(&done) == DEF_SUCCESS && done)
+			break;
+		svcSleepThread(1000000);
+	}
+}
+
+uint32_t Util_converter_y2r_yuv420p_planes_to_rgba8888(const uint8_t* const planes[3], const int strides[3],
+	uint8_t* dst_left, uint8_t* dst_right, uint16_t tex_width, uint16_t width, uint16_t height, uint8_t** buffered_output)
+{
+	uint32_t result = DEF_ERR_OTHER;
+	Handle event = 0;
+	bool started = false;
+	bool sbs = dst_right != NULL;
+	bool buffered = !sbs && tex_width >= 1024;
+	uint16_t eye_width = sbs ? width / 2 : width;
+	uint32_t spans[3] = { 0, 0, 0 };
+	Y2RU_ConversionParams parameters = { 0, };
+
+	if(!util_y2r_init)
+		return DEF_ERR_NOT_INITIALIZED;
+	if(!planes || !strides || !dst_left || (buffered && !buffered_output)
+	|| !Util_converter_y2r_can_convert_frame(tex_width, width, height, sbs))
+		return DEF_ERR_INVALID_ARG;
+	for(unsigned i = 0; i < 3; i++)
+	{
+		uint32_t columns = i ? width / 2 : width;
+		uint32_t rows = i ? height / 2 : height;
+		if(!planes[i] || strides[i] < (int)columns || strides[i] >= 0x8000)
+			return DEF_ERR_INVALID_ARG;
+		spans[i] = (rows - 1) * (uint32_t)strides[i] + columns;
+	}
+	if(buffered)
+	{
+		/* Preserve the existing 2D RGB-output fallback for 1024-wide textures.
+		 * Only its YUV input changes: no packed YUV staging buffer is needed. */
+		free(*buffered_output);
+		*buffered_output = (uint8_t*)linearAlloc((uint32_t)width * height * 4);
+		if(!*buffered_output)
+			return DEF_ERR_OUT_OF_LINEAR_MEMORY;
+		dst_left = *buffered_output;
+	}
+
+	/* One cache operation for the normal contiguous allocation; separate
+	 * operations also support planes with independent padding/ownership. */
+	if((uintptr_t)planes[1] == (uintptr_t)planes[0] + (uint32_t)strides[0] * height
+	&& (uintptr_t)planes[2] == (uintptr_t)planes[1] + (uint32_t)strides[1] * (height / 2))
+	{
+		result = svcFlushProcessDataCache(CUR_PROCESS_HANDLE, (uint32_t)planes[0],
+			(uint32_t)((uintptr_t)planes[2] - (uintptr_t)planes[0]) + spans[2]);
+		if(result != DEF_SUCCESS)
+			return result;
+	}
+	else
+	{
+		for(unsigned i = 0; i < 3; i++)
+		{
+			result = svcFlushProcessDataCache(CUR_PROCESS_HANDLE, (uint32_t)planes[i], spans[i]);
+			if(result != DEF_SUCCESS)
+				return result;
+		}
+	}
+
+	parameters.input_format = INPUT_YUV420_INDIV_8;
+	parameters.output_format = OUTPUT_RGB_32;
+	parameters.rotation = ROTATION_NONE;
+	parameters.block_alignment = BLOCK_8_BY_8;
+	parameters.input_line_width = eye_width;
+	parameters.input_lines = height;
+	parameters.standard_coefficient = COEFFICIENT_ITU_R_BT_709_SCALING;
+	parameters.alpha = 0xFF;
+	result = Y2RU_GetTransferEndEvent(&event);
+	if(result != DEF_SUCCESS)
+		return result;
+
+	for(unsigned eye = 0; eye < (sbs ? 2u : 1u); eye++)
+	{
+		uint16_t uv_width = eye_width / 2;
+		result = Y2RU_SetConversionParams(&parameters);
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = Y2RU_SetSendingY(planes[0] + eye * eye_width, (uint32_t)eye_width * height,
+			(int16_t)eye_width, (int16_t)(strides[0] - eye_width));
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = Y2RU_SetSendingU(planes[1] + eye * uv_width, (uint32_t)uv_width * (height / 2),
+			(int16_t)uv_width, (int16_t)(strides[1] - uv_width));
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = Y2RU_SetSendingV(planes[2] + eye * uv_width, (uint32_t)uv_width * (height / 2),
+			(int16_t)uv_width, (int16_t)(strides[2] - uv_width));
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = Y2RU_SetReceiving(eye ? dst_right : dst_left, (uint32_t)eye_width * height * 4,
+			(int16_t)(eye_width * (buffered ? 16 : 32)), buffered ? 0 : (int16_t)((tex_width - eye_width) * 32));
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = svcClearEvent(event);
+		if(result != DEF_SUCCESS) goto cleanup;
+		started = true;
+		result = Y2RU_StartConversion();
+		if(result != DEF_SUCCESS) goto cleanup;
+		result = converter_y2r_wait_for_frame(event);
+		if(result != DEF_SUCCESS) goto cleanup;
+		started = false;
+	}
+
+	cleanup:
+	if(started)
+		converter_y2r_cancel_frame();
+	svcCloseHandle(event);
+	return result;
+}
+
 void Util_converter_y2r_exit(void)
 {
 	if(util_y2r_init)

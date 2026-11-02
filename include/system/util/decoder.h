@@ -7,6 +7,8 @@
 
 #if DEF_DECODER_VIDEO_AUDIO_API_ENABLE
 
+struct AVFrame;
+
 /**
  * @brief Open media file.
  * @param path (in) File path.
@@ -274,6 +276,10 @@ uint16_t Util_decoder_mvd_get_available_raw_image_num(uint8_t session);
 */
 uint32_t Util_decoder_video_get_image(uint8_t** raw_data, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session);
 
+/* Transfer a directly readable frame reference; DEF_ERR_DISABLED leaves the
+ * frame queued for the copying interface. Destination must be empty. */
+uint32_t Util_decoder_video_get_image_ref(struct AVFrame* frame, double* current_pos, uint32_t width, uint32_t height, uint8_t packet_index, uint8_t session);
+
 /**
  * @brief Get raw image.
  * Call it after calling Util_decoder_mvd_decode().
@@ -361,6 +367,7 @@ void Util_decoder_close_file(uint8_t session);
 #define Util_decoder_video_get_available_raw_image_num(...) 0
 #define Util_decoder_mvd_get_available_raw_image_num(...) 0
 #define Util_decoder_video_get_image(...) DEF_ERR_DISABLED
+#define Util_decoder_video_get_image_ref(...) DEF_ERR_DISABLED
 #define Util_decoder_mvd_get_image(...) DEF_ERR_DISABLED
 #define Util_decoder_video_skip_image(...)
 #define Util_decoder_mvd_skip_image(...)

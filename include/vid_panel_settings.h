@@ -13,7 +13,7 @@ typedef enum {
 
 /* ── Sub-page IDs ── */
 typedef enum {
-    VP_SUBPAGE_ROOT     = 0,  /* top-level: volume, custom, video, advanced, ui mod */
+    VP_SUBPAGE_ROOT     = 0,  /* top-level: volume, track, custom, video, advanced, ui mod */
     VP_SUBPAGE_VIDEO    = 1,
     VP_SUBPAGE_ADVANCED = 2,
     VP_SUBPAGE_CUSTOM   = 3,
@@ -41,6 +41,7 @@ typedef enum {
     VP_SETTING_ID_SW_SE1_NO_VIDEO     = 41,
     VP_SETTING_ID_FS_BROWSER_ROOT     = 42, /* Custom: browse root — movies folder vs SD root */
     VP_SETTING_ID_UI_MOD              = 43, /* Root: full bottom info vs minimal */
+    VP_SETTING_ID_AUDIO_TRACK         = 44, /* Root: 3, 2, 1, 0; applied on next file open. */
 } VpSettingId;
 
 #define VP_SETTING_MAX_OPTS  4

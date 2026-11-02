@@ -66,7 +66,8 @@
 #define SETTINGS_ELEMENTS_V13						(uint8_t)(24)
 #define SETTINGS_ELEMENTS_V14						(uint8_t)(27)
 #define SETTINGS_ELEMENTS_V15						(uint8_t)(28)
-#define SETTINGS_ELEMENTS_NEWEST					(uint8_t)(SETTINGS_ELEMENTS_V15)
+#define SETTINGS_ELEMENTS_V16						(uint8_t)(29)
+#define SETTINGS_ELEMENTS_NEWEST					(uint8_t)(SETTINGS_ELEMENTS_V16)
 
 /* File browser top level: TF root vs sdmc:/movies（若不存在则尝试旧名 sdmc:/movie）。 */
 #define VID_FS_BROWSER_ROOT_MOVIE					(uint8_t)(0)
@@ -243,6 +244,7 @@ typedef struct
 	uint8_t video_scale_mode;		/* VID_SCALE_PIXEL_PERFECT / VID_SCALE_FIT */
 	uint8_t seek_duration;
 	uint16_t volume;			/* NDSP output volume, 0–100; queued PCM remains unscaled. */
+	uint8_t audio_track;		/* Preferred audio index, 0–3; applied on the next explicit file open. */
 
 	//Settings (can NOT be changed while playing videos).
 	bool disable_audio;
@@ -321,6 +323,7 @@ typedef struct
 
 	//Audio.
 	uint8_t num_of_audio_tracks;
+	uint8_t active_audio_track;	/* Fixed for this playback session, including decoder reopen on seek. */
 	double audio_current_pos;
 	double last_decoded_audio_pos;
 	Media_a_info audio_info[DEF_DECODER_MAX_AUDIO_TRACKS];

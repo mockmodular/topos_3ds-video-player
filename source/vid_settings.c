@@ -46,6 +46,7 @@ void Vid_init_settings(void)
 	vid_player.seek_duration = 10;
 	/* Output volume; missing <7> in old settings also falls back to unity gain. */
 	Vid_set_volume(100);
+	vid_player.audio_track = 0;
 
 	vid_player.disable_audio = false;
 	vid_player.disable_video = false;
@@ -97,7 +98,7 @@ uint32_t Vid_load_settings(void)
 	uint8_t settings_valid_until = 0;
 	uint8_t* cache = NULL;
 	uint32_t result = DEF_ERR_OTHER;
-	Str_data out_data[SETTINGS_ELEMENTS_V15] = { 0, };
+	Str_data out_data[SETTINGS_ELEMENTS_NEWEST] = { 0, };
 
 	{
 		char* boot_vid = NULL;
@@ -126,6 +127,7 @@ uint32_t Vid_load_settings(void)
 		{
 		const uint8_t settings_element_list[] =
 		{
+			SETTINGS_ELEMENTS_V16,
 			SETTINGS_ELEMENTS_V15,
 			SETTINGS_ELEMENTS_V14,
 			SETTINGS_ELEMENTS_V13,
@@ -215,6 +217,13 @@ uint32_t Vid_load_settings(void)
 	vid_player.sbs_swap_eyes = false;
 	if(settings_valid_until >= SETTINGS_ELEMENTS_V15)
 		vid_player.sbs_swap_eyes = (strtoul(DEF_STR_NEVER_NULL(&out_data[27]), NULL, 10) != 0);
+	vid_player.audio_track = 0;
+	if(settings_valid_until >= SETTINGS_ELEMENTS_V16)
+	{
+		unsigned long track = strtoul(DEF_STR_NEVER_NULL(&out_data[28]), NULL, 10);
+		if(track <= 3)
+			vid_player.audio_track = (uint8_t)track;
+	}
 	vid_player.use_hw_decoding = ((settings_valid_until > 3) ? (strtoul(DEF_STR_NEVER_NULL(&out_data[3]), NULL, 10) != 0) : true);
 	vid_player.use_hw_color_conversion = ((settings_valid_until > 4) ? (uint8_t)strtoul(DEF_STR_NEVER_NULL(&out_data[4]), NULL, 10) : VID_HW_CONV_Y2R_X2);
 	vid_player.use_hw_decoding_pending = vid_player.use_hw_decoding;
@@ -324,6 +333,7 @@ uint32_t Vid_save_settings(void)
 	Util_str_format_append(&data, "<25>%" PRIu8 "</25>", (uint8_t)(sem_cfg.is_eco ? 1 : 0));
 	Util_str_format_append(&data, "<26>%" PRIu8 "</26>", fake_ui_save);
 	Util_str_format_append(&data, "<27>%" PRIu8 "</27>", (uint8_t)vid_player.sbs_swap_eyes);
+	Util_str_format_append(&data, "<28>%" PRIu8 "</28>", vid_player.audio_track);
 
 	{
 		Topos_md_bundle b = { 0, };
@@ -347,6 +357,7 @@ void Vid_log_settings(void)
 	DEF_LOG_UINT(vid_player.use_hw_color_conversion);
 	DEF_LOG_BOOL(vid_player.use_multi_threaded_decoding);
 	DEF_LOG_UINT(vid_player.volume);
+	DEF_LOG_UINT(vid_player.audio_track);
 	DEF_LOG_UINT(vid_player.seek_duration);
 	DEF_LOG_UINT(vid_player.fs_browser_root_mode);
 	DEF_LOG_BOOL(vid_player.ui_mod);

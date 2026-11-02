@@ -226,6 +226,9 @@ void Vid_decode_thread(void* arg)
 					{
 						uint8_t num_of_audio_tracks = 0;
 						uint8_t num_of_video_tracks = 0;
+						/* Snapshot the in-memory setting only for an explicit open.
+						 * Seeking reopens the decoder without changing this selection. */
+						uint8_t requested_audio_track = vid_player.audio_track;
 						Str_data path = { 0, };
 
 						Util_str_init(&path);
@@ -305,6 +308,7 @@ void Vid_decode_thread(void* arg)
 							}
 						}
 
+						vid_player.active_audio_track = (requested_audio_track < num_of_audio_tracks) ? requested_audio_track : 0;
 						if(num_of_audio_tracks > 0)
 						{
 							DEF_LOG_RESULT_SMART(result, Util_speaker_init(), (result == DEF_SUCCESS), result);
@@ -324,8 +328,8 @@ void Vid_decode_thread(void* arg)
 
 
 								//3DS only supports up to 2ch.
-								playing_ch = (vid_player.audio_info[0].ch > 2 ? 2 : vid_player.audio_info[0].ch);
-								DEF_LOG_RESULT_SMART(result, Util_speaker_set_audio_info(DEF_VID_SPEAKER_SESSION_ID, playing_ch, vid_player.audio_info[0].sample_rate), (result == DEF_SUCCESS), result);
+								playing_ch = (vid_player.audio_info[vid_player.active_audio_track].ch > 2 ? 2 : vid_player.audio_info[vid_player.active_audio_track].ch);
+								DEF_LOG_RESULT_SMART(result, Util_speaker_set_audio_info(DEF_VID_SPEAKER_SESSION_ID, playing_ch, vid_player.audio_info[vid_player.active_audio_track].sample_rate), (result == DEF_SUCCESS), result);
 
 								vid_player.num_of_audio_tracks = num_of_audio_tracks;
 							}
@@ -504,7 +508,7 @@ void Vid_decode_thread(void* arg)
 
 
 						//Set media duration.
-						vid_player.media_duration = DEF_UTIL_S_TO_MS_D(Vid_get_media_duration(vid_player.video_info[EYE_LEFT].duration, vid_player.video_info[EYE_RIGHT].duration, vid_player.audio_info[0].duration));
+						vid_player.media_duration = DEF_UTIL_S_TO_MS_D(Vid_get_media_duration(vid_player.video_info[EYE_LEFT].duration, vid_player.video_info[EYE_RIGHT].duration, vid_player.audio_info[vid_player.active_audio_track].duration));
 
 						//Can't play with no audio and no video.
 						if(vid_player.num_of_audio_tracks == 0 && vid_player.num_of_video_tracks == 0)
@@ -1135,8 +1139,8 @@ void Vid_decode_thread(void* arg)
 
 			//Audio buffer health (in ms) is ((buffer_size / bytes_per_sample / playing_ch / sample_rate) * 1000).
 			//3DS only supports up to 2ch.
-			playing_ch = (vid_player.audio_info[0].ch > 2 ? 2 : vid_player.audio_info[0].ch);
-			audio_buffer_health_ms = DEF_UTIL_S_TO_MS_D(audio_buffers_size / 2.0 / playing_ch / vid_player.audio_info[0].sample_rate);
+			playing_ch = (vid_player.audio_info[vid_player.active_audio_track].ch > 2 ? 2 : vid_player.audio_info[vid_player.active_audio_track].ch);
+			audio_buffer_health_ms = DEF_UTIL_S_TO_MS_D(audio_buffers_size / 2.0 / playing_ch / vid_player.audio_info[vid_player.active_audio_track].sample_rate);
 
 			//Update audio position.
 			if(vid_player.num_of_audio_tracks > 0)
@@ -1339,7 +1343,7 @@ void Vid_decode_thread(void* arg)
 			}
 			else if(type == MEDIA_PACKET_TYPE_AUDIO)
 			{
-				if(vid_player.num_of_audio_tracks > packet_index && packet_index == 0)
+				if(vid_player.num_of_audio_tracks > packet_index && packet_index == vid_player.active_audio_track)
 				{
 					result = Util_decoder_ready_audio_packet(packet_index, DEF_VID_DECORDER_SESSION_ID);
 					if(result == DEF_SUCCESS)

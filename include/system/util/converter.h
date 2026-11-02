@@ -190,6 +190,14 @@ uint32_t Util_converter_y2r_yuv420p_to_rgba8888_direct(const uint8_t* yuv420p, u
 */
 uint32_t Util_converter_y2r_yuv420p_sbs_to_rgba8888(const uint8_t* yuv420p, uint8_t* dst_left, uint8_t* dst_right, uint16_t tex_width, uint16_t full_width, uint16_t height);
 
+/* Shared preflight for the frame-reference path. A NULL right destination in
+ * the converter selects 2D; otherwise both SBS eyes are written in sequence.
+ * For a 1024-wide 2D texture, buffered_output receives the allocated tiled RGB
+ * image for the existing texture uploader; the caller must free that image. */
+bool Util_converter_y2r_can_convert_frame(uint32_t tex_width, uint32_t width, uint32_t height, bool sbs);
+uint32_t Util_converter_y2r_yuv420p_planes_to_rgba8888(const uint8_t* const planes[3], const int strides[3],
+	uint8_t* dst_left, uint8_t* dst_right, uint16_t tex_width, uint16_t width, uint16_t height, uint8_t** buffered_output);
+
 /**
  * @brief Uninitialize a y2r(hardware color converter).
  * Do nothing if y2r API is not initialized.
@@ -204,6 +212,8 @@ void Util_converter_y2r_exit(void);
 #define Util_converter_y2r_yuv420p_to_rgba8888(...) DEF_ERR_DISABLED
 #define Util_converter_y2r_yuv420p_to_rgba8888_direct(...) DEF_ERR_DISABLED
 #define Util_converter_y2r_yuv420p_sbs_to_rgba8888(...) DEF_ERR_DISABLED
+#define Util_converter_y2r_can_convert_frame(...) false
+#define Util_converter_y2r_yuv420p_planes_to_rgba8888(...) DEF_ERR_DISABLED
 #define Util_converter_y2r_exit()
 
 #endif //DEF_CONVERTER_HW_API_ENABLE

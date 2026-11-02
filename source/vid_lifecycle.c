@@ -274,6 +274,7 @@ void Vid_init_video_data(void)
 void Vid_init_audio_data(void)
 {
 	vid_player.num_of_audio_tracks = 0;
+	vid_player.active_audio_track = 0;
 	vid_player.audio_current_pos = 0;
 	vid_player.last_decoded_audio_pos = 0;
 

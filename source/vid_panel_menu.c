@@ -71,7 +71,7 @@ void Vid_panel_player_draw_status(uint32_t color,
 	Draw(&format_str, (float)VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_V_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
 	Util_str_format(&format_str, "a:%-6s",
-		vid_player.audio_info[0].short_format_name);
+		vid_player.audio_info[vid_player.active_audio_track].short_format_name);
 	Draw(&format_str, (float)VP_PLAYER_UI_STATUS_LEFT_X, (float)VP_PLAYER_STATUS_ROW_A_Y, DEF_DRAW_TEXT_SCALE, DEF_DRAW_TEXT_SCALE, color);
 
 	// ——— 分辨率、帧率、SBS、3D 同一行；列左缘间距 VP_PLAYER_UI_HCOL_STEP ————————

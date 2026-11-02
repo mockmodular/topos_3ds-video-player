@@ -14,6 +14,7 @@ extern void memcpy_asm(uint8_t*, uint8_t*, uint32_t);
 
 #include "system/util/converter.h"
 #include "system/util/decoder.h"
+#include "libavutil/frame.h"
 #include "system/util/err.h"
 #include "system/util/log.h"
 #include "system/util/speaker.h"
@@ -671,6 +672,8 @@ void Vid_convert_thread(void* arg)
 	uint32_t result = DEF_ERR_OTHER;
 	double total_delay = 0;
 	TickCounter conversion_time_counter = { 0, };
+	/* Reuse the container; decoded pixels remain owned by FFmpeg references. */
+	AVFrame* direct_frame = av_frame_alloc();
 
 	osTickCounterStart(&conversion_time_counter);
 
@@ -772,12 +775,12 @@ void Vid_convert_thread(void* arg)
 		else
 			num_of_cached_raw_images = Util_decoder_video_get_available_raw_image_num(packet_index, DEF_VID_DECORDER_SESSION_ID);
 
-		if(vid_player.num_of_audio_tracks > 0 && vid_player.audio_info[0].sample_rate > 0)
+		if(vid_player.num_of_audio_tracks > 0 && vid_player.audio_info[vid_player.active_audio_track].sample_rate > 0)
 		{
-			uint8_t playing_ch = (vid_player.audio_info[0].ch > 2 ? 2 : vid_player.audio_info[0].ch);
+			uint8_t playing_ch = (vid_player.audio_info[vid_player.active_audio_track].ch > 2 ? 2 : vid_player.audio_info[vid_player.active_audio_track].ch);
 			uint32_t audio_buffers_size = Util_speaker_get_available_buffer_size(DEF_VID_SPEAKER_SESSION_ID);
 
-			audio_buffer_ms = (uint32_t)DEF_UTIL_S_TO_MS_D(audio_buffers_size / 2.0 / playing_ch / vid_player.audio_info[0].sample_rate);
+			audio_buffer_ms = (uint32_t)DEF_UTIL_S_TO_MS_D(audio_buffers_size / 2.0 / playing_ch / vid_player.audio_info[vid_player.active_audio_track].sample_rate);
 		}
 
 		/* 已禁用音画丢帧与 SEEKING 下 skip 排空：PLAYING/SEEKING 均走完整 get_image→纹理路径。 */
@@ -804,6 +807,8 @@ void Vid_convert_thread(void* arg)
 				uint8_t next_draw_index = vid_player.next_draw_index[packet_index];
 				uint8_t* yuv_video = NULL;
 				uint8_t* video = NULL;
+				C3D_Tex* direct_left = NULL;
+				C3D_Tex* direct_right = NULL;
 				uint32_t width = vid_player.video_info[packet_index].codec_width;
 				uint32_t height = vid_player.video_info[packet_index].codec_height;
 				double pos = 0;
@@ -827,7 +832,23 @@ void Vid_convert_thread(void* arg)
 				if(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING)//Hardware decoder only supports 1 track at a time.
 					result = Util_decoder_mvd_get_image(&video, &pos, width, height, DEF_VID_DECORDER_SESSION_ID);
 				else
-					result = Util_decoder_video_get_image(&yuv_video, &pos, width, height, packet_index, DEF_VID_DECORDER_SESSION_ID);
+				{
+					result = DEF_ERR_DISABLED;
+					if(direct_frame && !vid_player.video_info[packet_index].is_av1_codec
+					&& (vid_player.sub_state & PLAYER_SUB_STATE_HW_CONVERSION)
+					&& vid_player.use_hw_color_conversion == VID_HW_CONV_Y2R_X2)
+					{
+						bool sbs = vid_player.is_sbs_3d && vid_player.sbs_right_buf;
+						direct_left = vid_player.large_image[next_store_index][sbs ? EYE_LEFT : packet_index].images[0].c2d.tex;
+						direct_right = sbs ? vid_player.large_image[next_store_index][EYE_RIGHT].images[0].c2d.tex : NULL;
+						if(direct_left && direct_left->data && direct_left->height >= height
+						&& (!sbs || (direct_right && direct_right->data && direct_right->height >= height && direct_right->width == direct_left->width))
+						&& Util_converter_y2r_can_convert_frame(direct_left->width, width, height, sbs))
+							result = Util_decoder_video_get_image_ref(direct_frame, &pos, width, height, packet_index, DEF_VID_DECORDER_SESSION_ID);
+					}
+					if(result == DEF_ERR_DISABLED)
+						result = Util_decoder_video_get_image(&yuv_video, &pos, width, height, packet_index, DEF_VID_DECORDER_SESSION_ID);
+				}
 
 				if(result == DEF_SUCCESS)
 				{
@@ -839,7 +860,15 @@ void Vid_convert_thread(void* arg)
 
 			if(!(vid_player.sub_state & PLAYER_SUB_STATE_HW_DECODING))
 				{
-					if(vid_player.video_info[packet_index].is_av1_codec)
+					if(direct_frame && direct_frame->buf[0])
+					{
+						const uint8_t* planes[3] = { direct_frame->data[0], direct_frame->data[1], direct_frame->data[2] };
+						result = Util_converter_y2r_yuv420p_planes_to_rgba8888(planes, direct_frame->linesize,
+							(uint8_t*)direct_left->data, direct_right ? (uint8_t*)direct_right->data : NULL, (uint16_t)direct_left->width, width, height, &video);
+						/* Converter returns only after completion or acknowledged stop. */
+						av_frame_unref(direct_frame);
+					}
+					else if(vid_player.video_info[packet_index].is_av1_codec)
 					{
 						/* AV1 dedicated path: always use software color converter (swscale). */
 						Converter_color_parameters color_converter_parameters = { 0, };
@@ -1186,6 +1215,7 @@ void Vid_convert_thread(void* arg)
 			Util_sleep(1000);
 	}
 
+	av_frame_free(&direct_frame);
 	DEF_LOG_STRING("Thread exit.");
 	threadExit(0);
 }
